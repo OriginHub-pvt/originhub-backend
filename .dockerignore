@@ -35,23 +35,30 @@ env/
 *.swo
 *~
 
+# Git
+.git/
+.gitignore
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
 # Environment
 .env
 .env.local
 .env.*.local
-
-# Docker
-.docker/
-docker/volumes/weaviate/*
-!docker/volumes/weaviate/.gitkeep
-docker/volumes/postgres/*
-!docker/volumes/postgres/.gitkeep
 
 # Testing
 .pytest_cache/
 .coverage
 htmlcov/
 
+# Documentation
+*.md
+docs/
+
 # OS
 .DS_Store
 Thumbs.db
+
