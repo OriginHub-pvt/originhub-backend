@@ -1,20 +1,11 @@
+"""
+Idea request/response schemas
+"""
+
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from datetime import datetime
 
 
-# Chat Models
-class ChatRequest(BaseModel):
-    message: str = Field(..., description="User message")
-
-
-class ChatResponse(BaseModel):
-    success: bool = True
-    data: dict
-    message: Optional[str] = None
-
-
-# Ideas Models
 class IdeaCreate(BaseModel):
     title: str = Field(..., description="Idea title")
     description: str = Field(..., description="Idea description")
@@ -50,9 +41,3 @@ class IdeaCreateResponse(BaseModel):
     success: bool = True
     data: dict
     message: str = "Idea created successfully"
-
-
-class ErrorResponse(BaseModel):
-    success: bool = False
-    error: str
-

@@ -1,9 +1,10 @@
 from fastapi import APIRouter, HTTPException, Query, Body
 from typing import Optional, Dict, Any
-from app.models import IdeaCreate, IdeaListResponse, IdeaCreateResponse
+from app.schemas import IdeaCreate, IdeaListResponse, IdeaCreateResponse
 from app.services.ideas_service import ideas_service
 
 router = APIRouter(prefix="/ideas", tags=["ideas"])
+
 
 @router.get("", response_model=IdeaListResponse)
 async def get_ideas(
@@ -17,7 +18,7 @@ async def get_ideas(
     Get all ideas from the database (Weaviate) and send to frontend.
     Returns all data including: id, title, description, problem, solution,
     marketSize, tags, author, createdAt, upvotes, views, and status.
-    
+
     Supports optional filtering by search query and tags, and sorting.
     """
     try:
@@ -34,6 +35,7 @@ async def get_ideas(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
 
 @router.post("", response_model=IdeaCreateResponse, status_code=201)
 async def create_idea(idea: IdeaCreate):
@@ -58,7 +60,7 @@ async def add_idea(idea_data: Dict[str, Any] = Body(...)):
     """
     Add an idea directly using a dictionary.
     This endpoint accepts a flexible JSON structure and stores it in Weaviate.
-    
+
     Request body should contain:
     - title (required)
     - description (required)
@@ -74,15 +76,22 @@ async def add_idea(idea_data: Dict[str, Any] = Body(...)):
     """
     try:
         # Validate required fields
-        required_fields = ["title", "description", "problem", "solution", "marketSize", "author"]
+        required_fields = [
+            "title",
+            "description",
+            "problem",
+            "solution",
+            "marketSize",
+            "author",
+        ]
         missing_fields = [field for field in required_fields if field not in idea_data]
-        
+
         if missing_fields:
             raise HTTPException(
                 status_code=400,
-                detail=f"Missing required fields: {', '.join(missing_fields)}"
+                detail=f"Missing required fields: {', '.join(missing_fields)}",
             )
-        
+
         # Add idea using the add_idea method
         new_idea = ideas_service.add_idea(idea_data)
 

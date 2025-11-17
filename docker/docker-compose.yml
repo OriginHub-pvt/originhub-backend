@@ -27,15 +27,23 @@ services:
       - "${WEAVIATE_PORT:-8080}:8080"
     environment:
       QUERY_DEFAULTS_LIMIT: 25
-      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
-      PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
-      DEFAULT_VECTORIZER_MODULE: 'none'
-      ENABLE_MODULES: 'text2vec-openai,text2vec-cohere,text2vec-huggingface,ref2vec-centroid,generative-openai,qna-openai'
-      CLUSTER_HOSTNAME: 'node1'
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: "/var/lib/weaviate"
+      DEFAULT_VECTORIZER_MODULE: "none"
+      ENABLE_MODULES: "text2vec-openai,text2vec-cohere,text2vec-huggingface,ref2vec-centroid,generative-openai,qna-openai"
+      CLUSTER_HOSTNAME: "node1"
     volumes:
       - ./volumes/weaviate:/var/lib/weaviate
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/v1/.well-known/ready"]
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:8080/v1/.well-known/ready",
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -48,6 +56,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     container_name: originhub-api
+    # Entrypoint script will handle migrations, then run this command
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       - ..:/app
@@ -63,6 +72,7 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-originhub123}
       - POSTGRES_DB=${POSTGRES_DB:-originhub}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
+      - CLERK_WEBHOOK_SECRET=${CLERK_WEBHOOK_SECRET:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -75,4 +85,3 @@ services:
 networks:
   originhub-network:
     driver: bridge
-
