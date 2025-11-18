@@ -29,6 +29,7 @@ class IdeaResponse(BaseModel):
     upvotes: int
     views: int
     status: str
+    user_id: Optional[str] = None
 
 
 class IdeaListResponse(BaseModel):

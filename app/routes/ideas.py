@@ -15,14 +15,14 @@ async def get_ideas(
     ),
 ):
     """
-    Get all ideas from the database (Weaviate) and send to frontend.
+    Get all ideas from the database (PostgreSQL) and send to frontend.
     Returns all data including: id, title, description, problem, solution,
-    marketSize, tags, author, createdAt, upvotes, views, and status.
+    marketSize, tags, author, createdAt, upvotes, views, status, and user_id.
 
     Supports optional filtering by search query and tags, and sorting.
     """
     try:
-        # Get all ideas from Weaviate database
+        # Get all ideas from PostgreSQL database
         all_ideas = ideas_service.get_all_ideas(
             search=search, tags=tags, sort_by=sort_by
         )
@@ -40,7 +40,7 @@ async def get_ideas(
 @router.post("", response_model=IdeaCreateResponse, status_code=201)
 async def create_idea(idea: IdeaCreate):
     """
-    Create a new idea and store it in Weaviate.
+    Create a new idea and store it in PostgreSQL.
     """
     try:
         new_idea = ideas_service.create_idea(idea)
@@ -59,7 +59,7 @@ async def create_idea(idea: IdeaCreate):
 async def add_idea(idea_data: Dict[str, Any] = Body(...)):
     """
     Add an idea directly using a dictionary.
-    This endpoint accepts a flexible JSON structure and stores it in Weaviate.
+    This endpoint accepts a flexible JSON structure and stores it in PostgreSQL.
 
     Request body should contain:
     - title (required)
@@ -73,6 +73,7 @@ async def add_idea(idea_data: Dict[str, Any] = Body(...)):
     - upvotes (optional, defaults to 0)
     - views (optional, defaults to 0)
     - status (optional, defaults to "draft")
+    - user_id (optional, user ID to associate with the idea)
     """
     try:
         # Validate required fields
@@ -98,7 +99,7 @@ async def add_idea(idea_data: Dict[str, Any] = Body(...)):
         return IdeaCreateResponse(
             success=True,
             data={"id": new_idea["id"]},
-            message="Idea added successfully to Weaviate",
+            message="Idea added successfully to PostgreSQL",
         )
 
     except HTTPException:

@@ -1,40 +1,48 @@
 from typing import List, Dict, Optional
 from app.schemas import IdeaCreate
+from app.models.idea import Idea
+from app.models.user import User
+from app.database import SessionLocal
+from sqlalchemy import or_, func
 import uuid
 from datetime import datetime
-from app.services.weaviate_service import weaviate_service
 
 
 class IdeasService:
     """
     Service layer for ideas data operations.
-    This abstracts data access logic and can be easily replaced with database calls later.
+    Uses PostgreSQL database instead of Weaviate.
     """
 
     @staticmethod
-    def _convert_weaviate_to_idea_format(weaviate_result: Dict) -> Dict:
+    def _convert_model_to_dict(idea: Idea) -> Dict:
         """
-        Convert Weaviate result format to our standard idea format.
+        Convert SQLAlchemy Idea model to dictionary format.
 
         Args:
-            weaviate_result: Dictionary from Weaviate query result
+            idea: Idea model instance
 
         Returns:
             Dictionary in standard idea format
         """
         return {
-            "id": weaviate_result.get("ideaId", ""),
-            "title": weaviate_result.get("title", ""),
-            "description": weaviate_result.get("description", ""),
-            "problem": weaviate_result.get("problem", ""),
-            "solution": weaviate_result.get("solution", ""),
-            "marketSize": weaviate_result.get("marketSize", ""),
-            "tags": weaviate_result.get("tags", []),
-            "author": weaviate_result.get("author", ""),
-            "createdAt": weaviate_result.get("createdAt", ""),
-            "upvotes": weaviate_result.get("upvotes", 0),
-            "views": weaviate_result.get("views", 0),
-            "status": weaviate_result.get("status", "draft"),
+            "id": str(idea.id),
+            "title": idea.title,
+            "description": idea.description,
+            "problem": idea.problem,
+            "solution": idea.solution,
+            "marketSize": idea.marketSize,
+            "tags": idea.tags or [],
+            "author": idea.author,
+            "createdAt": (
+                idea.createdAt.isoformat() + "Z"
+                if idea.createdAt
+                else datetime.utcnow().isoformat() + "Z"
+            ),
+            "upvotes": idea.upvotes,
+            "views": idea.views,
+            "status": idea.status,
+            "user_id": idea.user_id,
         }
 
     @staticmethod
@@ -44,7 +52,7 @@ class IdeasService:
         sort_by: Optional[str] = "createdAt",
     ) -> List[Dict]:
         """
-        Get all ideas from Weaviate with optional filtering and sorting.
+        Get all ideas from PostgreSQL with optional filtering and sorting.
         Returns all data from the database to the frontend.
 
         Args:
@@ -55,81 +63,106 @@ class IdeasService:
         Returns:
             List of idea dictionaries with all fields
         """
-        # Get all ideas from Weaviate (limit set high to get all data)
-        if search:
-            # Use Weaviate search with the query
-            weaviate_results = weaviate_service.search_ideas(query=search, limit=10000)
-        else:
-            # Get ALL ideas from Weaviate (no search filter)
-            weaviate_results = weaviate_service.search_ideas(query="", limit=10000)
+        db = SessionLocal()
+        try:
+            # Start with base query
+            query = db.query(Idea)
 
-        # Convert Weaviate format to our standard format
-        ideas = [
-            IdeasService._convert_weaviate_to_idea_format(result)
-            for result in weaviate_results
-        ]
-
-        # Filter by tags if provided
-        if tags:
-            tag_list = [tag.strip().lower() for tag in tags.split(",")]
-            ideas = [
-                idea
-                for idea in ideas
-                if idea.get("id")
-                and any(
-                    tag in [t.lower() for t in idea.get("tags", [])] for tag in tag_list
+            # Apply search filter if provided
+            if search:
+                search_pattern = f"%{search}%"
+                query = query.filter(
+                    or_(
+                        Idea.title.ilike(search_pattern),
+                        Idea.description.ilike(search_pattern),
+                        Idea.problem.ilike(search_pattern),
+                        Idea.solution.ilike(search_pattern),
+                    )
                 )
-            ]
 
-        # Sort ideas
-        if sort_by == "title":
-            ideas.sort(key=lambda x: x.get("title", "").lower())
-        elif sort_by == "createdAt":
-            ideas.sort(key=lambda x: x.get("createdAt", ""), reverse=True)
+            # Apply tags filter if provided
+            if tags:
+                tag_list = [tag.strip().lower() for tag in tags.split(",")]
+                # Filter ideas where any tag in the array matches (case-insensitive)
+                # Using PostgreSQL array_to_string and ILIKE for case-insensitive matching
+                conditions = []
+                for tag in tag_list:
+                    # Convert array to lowercase string and check if tag is contained
+                    conditions.append(
+                        func.lower(func.array_to_string(Idea.tags, ",")).contains(tag)
+                    )
+                if conditions:
+                    from sqlalchemy import or_ as sql_or
 
-        # Return all ideas from Weaviate
-        return ideas
+                    query = query.filter(sql_or(*conditions))
+
+            # Apply sorting
+            if sort_by == "title":
+                query = query.order_by(Idea.title.asc())
+            elif sort_by == "createdAt":
+                query = query.order_by(Idea.createdAt.desc())
+            else:
+                query = query.order_by(Idea.createdAt.desc())
+
+            # Execute query and convert to dictionaries
+            ideas = query.all()
+            return [IdeasService._convert_model_to_dict(idea) for idea in ideas]
+
+        finally:
+            db.close()
 
     @staticmethod
-    def create_idea(idea: IdeaCreate) -> Dict:
+    def create_idea(idea: IdeaCreate, user_id: Optional[str] = None) -> Dict:
         """
-        Create a new idea and store it in Weaviate.
+        Create a new idea and store it in PostgreSQL.
 
         Args:
             idea: IdeaCreate model with idea data
+            user_id: Optional user_id to associate with the idea
 
         Returns:
             Dictionary with the created idea data including generated ID
         """
-        # Generate unique ID
-        idea_id = str(uuid.uuid4())
+        db = SessionLocal()
+        try:
+            # Generate unique ID
+            idea_id = str(uuid.uuid4())
 
-        # Create idea object
-        new_idea = {
-            "id": idea_id,
-            "title": idea.title,
-            "description": idea.description,
-            "problem": idea.problem,
-            "solution": idea.solution,
-            "marketSize": idea.marketSize,
-            "tags": idea.tags,
-            "author": idea.author,
-            "createdAt": datetime.utcnow().isoformat() + "Z",
-            "upvotes": 0,
-            "views": 0,
-            "status": "draft",
-        }
+            # Create idea object
+            new_idea = Idea(
+                id=idea_id,
+                title=idea.title,
+                description=idea.description,
+                problem=idea.problem,
+                solution=idea.solution,
+                marketSize=idea.marketSize,
+                tags=idea.tags or [],
+                author=idea.author,
+                createdAt=datetime.utcnow(),
+                upvotes=0,
+                views=0,
+                status="draft",
+                user_id=user_id,
+            )
 
-        # Add to Weaviate
-        weaviate_service.add_idea(new_idea)
+            # Add to database
+            db.add(new_idea)
+            db.commit()
+            db.refresh(new_idea)
 
-        return new_idea
+            return IdeasService._convert_model_to_dict(new_idea)
+
+        except Exception as e:
+            db.rollback()
+            raise Exception(f"Error creating idea: {str(e)}")
+        finally:
+            db.close()
 
     @staticmethod
     def add_idea(idea_data: Dict) -> Dict:
         """
         Add an idea directly (alternative method for adding ideas).
-        This method accepts a dictionary and stores it in Weaviate.
+        This method accepts a dictionary and stores it in PostgreSQL.
 
         Args:
             idea_data: Dictionary containing idea data
@@ -137,25 +170,127 @@ class IdeasService:
         Returns:
             Dictionary with the created idea data including generated ID
         """
-        # Ensure ID exists
-        if "id" not in idea_data:
-            idea_id = str(uuid.uuid4())
-            idea_data["id"] = idea_id
+        db = SessionLocal()
+        try:
+            # Ensure ID exists and is in correct UUID format
+            if "id" not in idea_data:
+                idea_id = str(uuid.uuid4())
+                idea_data["id"] = idea_id
+            else:
+                # Validate UUID format
+                try:
+                    # Try to parse as UUID to ensure it's valid
+                    uuid.UUID(idea_data["id"])
+                    idea_data["id"] = str(idea_data["id"])  # Ensure it's a string
+                except (ValueError, TypeError):
+                    # If invalid, generate a new one
+                    idea_id = str(uuid.uuid4())
+                    idea_data["id"] = idea_id
 
-        # Ensure required fields have defaults
-        if "createdAt" not in idea_data:
-            idea_data["createdAt"] = datetime.utcnow().isoformat() + "Z"
-        if "upvotes" not in idea_data:
-            idea_data["upvotes"] = 0
-        if "views" not in idea_data:
-            idea_data["views"] = 0
-        if "status" not in idea_data:
-            idea_data["status"] = "draft"
+            # Ensure required fields have defaults
+            if "createdAt" not in idea_data:
+                idea_data["createdAt"] = datetime.utcnow()
+            elif isinstance(idea_data["createdAt"], str):
+                # Parse ISO format string to datetime
+                try:
+                    # Try parsing with Z timezone first
+                    if idea_data["createdAt"].endswith("Z"):
+                        idea_data["createdAt"] = datetime.fromisoformat(
+                            idea_data["createdAt"].replace("Z", "+00:00")
+                        )
+                    else:
+                        idea_data["createdAt"] = datetime.fromisoformat(
+                            idea_data["createdAt"]
+                        )
+                except ValueError:
+                    # If parsing fails, use current time
+                    idea_data["createdAt"] = datetime.utcnow()
+            # If it's already a datetime object, keep it as is
 
-        # Add to Weaviate
-        weaviate_service.add_idea(idea_data)
+            if "upvotes" not in idea_data:
+                idea_data["upvotes"] = 0
+            if "views" not in idea_data:
+                idea_data["views"] = 0
+            if "status" not in idea_data:
+                idea_data["status"] = "draft"
+            if "tags" not in idea_data:
+                idea_data["tags"] = []
 
-        return idea_data
+            # Ensure tags is a list (not None)
+            tags_list = idea_data.get("tags") or []
+            if not isinstance(tags_list, list):
+                tags_list = []
+
+            # Validate required string fields are not empty
+            required_string_fields = [
+                "title",
+                "description",
+                "problem",
+                "solution",
+                "marketSize",
+                "author",
+            ]
+            for field in required_string_fields:
+                if not idea_data.get(field) or not str(idea_data[field]).strip():
+                    raise ValueError(f"Field '{field}' cannot be empty")
+
+            # Validate user_id if provided
+            user_id = idea_data.get("user_id")
+            # Convert empty string, None, or falsy values to None
+            if (
+                not user_id
+                or user_id == ""
+                or (isinstance(user_id, str) and not user_id.strip())
+            ):
+                user_id = None
+            else:
+                # Check if user exists in database
+                user = (
+                    db.query(User).filter(User.user_id == str(user_id).strip()).first()
+                )
+                if not user:
+                    # If user doesn't exist, set user_id to None instead of failing
+                    # This allows ideas to be created even if user_id is invalid
+                    print(
+                        f"Warning: user_id '{user_id}' does not exist in users table. Setting to None."
+                    )
+                    user_id = None
+
+            # Create idea object
+            new_idea = Idea(
+                id=idea_data["id"],
+                title=idea_data["title"],
+                description=idea_data["description"],
+                problem=idea_data["problem"],
+                solution=idea_data["solution"],
+                marketSize=idea_data["marketSize"],
+                tags=tags_list,
+                author=idea_data["author"],
+                createdAt=idea_data["createdAt"],
+                upvotes=idea_data["upvotes"],
+                views=idea_data["views"],
+                status=idea_data["status"],
+                user_id=user_id,
+            )
+
+            # Add to database
+            db.add(new_idea)
+            db.commit()
+            db.refresh(new_idea)
+
+            return IdeasService._convert_model_to_dict(new_idea)
+
+        except Exception as e:
+            db.rollback()
+            # Log the full error for debugging
+            import traceback
+
+            error_details = traceback.format_exc()
+            print(f"Error adding idea: {str(e)}")
+            print(f"Full traceback: {error_details}")
+            raise Exception(f"Error adding idea: {str(e)}")
+        finally:
+            db.close()
 
 
 # Create a singleton instance for easy import
