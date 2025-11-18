@@ -74,6 +74,7 @@ async def add_idea(idea_data: Dict[str, Any] = Body(...)):
     - views (optional, defaults to 0)
     - status (optional, defaults to "draft")
     - user_id (optional, user ID to associate with the idea)
+    - link (optional, link to the idea)
     """
     try:
         # Validate required fields

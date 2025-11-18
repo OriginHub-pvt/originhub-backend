@@ -43,6 +43,7 @@ class IdeasService:
             "views": idea.views,
             "status": idea.status,
             "user_id": idea.user_id,
+            "link": idea.link,
         }
 
     @staticmethod
@@ -143,6 +144,7 @@ class IdeasService:
                 views=0,
                 status="draft",
                 user_id=user_id,
+                link=getattr(idea, "link", None),
             )
 
             # Add to database
@@ -256,6 +258,11 @@ class IdeasService:
                     )
                     user_id = None
 
+            # Get link field (optional)
+            link = idea_data.get("link")
+            if link and isinstance(link, str) and not link.strip():
+                link = None
+
             # Create idea object
             new_idea = Idea(
                 id=idea_data["id"],
@@ -271,6 +278,7 @@ class IdeasService:
                 views=idea_data["views"],
                 status=idea_data["status"],
                 user_id=user_id,
+                link=link,
             )
 
             # Add to database

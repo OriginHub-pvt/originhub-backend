@@ -38,6 +38,7 @@ class Idea(Base):
     user_id = Column(
         String(255), ForeignKey("users.user_id"), nullable=True, index=True
     )
+    link = Column(Text, nullable=True)
 
     # Relationship to User
     user = relationship("User", backref="ideas")

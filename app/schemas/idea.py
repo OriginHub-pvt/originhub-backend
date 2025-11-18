@@ -14,6 +14,7 @@ class IdeaCreate(BaseModel):
     marketSize: str = Field(..., description="Market size")
     tags: List[str] = Field(default_factory=list, description="Tags for the idea")
     author: str = Field(..., description="Author name")
+    link: Optional[str] = Field(None, description="Link to the idea")
 
 
 class IdeaResponse(BaseModel):
@@ -30,6 +31,7 @@ class IdeaResponse(BaseModel):
     views: int
     status: str
     user_id: Optional[str] = None
+    link: Optional[str] = None
 
 
 class IdeaListResponse(BaseModel):
