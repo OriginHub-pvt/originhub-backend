@@ -1,0 +1,6 @@
+# Ignore all data in volumes except .gitkeep files
+volumes/weaviate/*
+!volumes/weaviate/.gitkeep
+volumes/postgres/*
+!volumes/postgres/.gitkeep
+
