@@ -5,10 +5,12 @@ FastAPI backend for the OriginHub platform - a platform for idea generation and 
 ## Features
 
 - **Chat API**: AI-powered chat endpoint for user interactions
-- **Ideas API**: Create and retrieve ideas with filtering and sorting
+- **Ideas API**: Full CRUD operations for ideas with filtering, sorting, and ownership verification
+- **User Management**: Clerk webhook integration for user synchronization
+- **Authentication**: Header-based authentication with ownership checks
 - **CORS Enabled**: Configured to work with Next.js frontend
 - **Docker Support**: Complete Docker setup with PostgreSQL and Weaviate
-- **In-Memory Storage**: Simple storage solution (database integration ready)
+- **PostgreSQL Integration**: Full database integration with SQLAlchemy ORM
 
 ## Tech Stack
 
@@ -34,19 +36,22 @@ The application can be run in **two ways**:
 #### Setup
 
 1. **Copy environment file:**
+
    ```bash
    cp .env.example .env
    ```
 
 2. **Start all services (PostgreSQL, Weaviate, and API):**
+
    ```bash
    cd docker
    docker compose up -d
    ```
-   
+
    **Note:** All Docker files are in the `docker/` directory. Run commands from there.
 
 3. **View logs:**
+
    ```bash
    docker compose logs -f api
    ```
@@ -57,6 +62,7 @@ The application can be run in **two ways**:
    ```
 
 **Services available:**
+
 - **API**: http://localhost:8000
 - **API Docs**: http://localhost:8000/docs
 - **PostgreSQL**: localhost:5432
@@ -74,27 +80,31 @@ The application can be run in **two ways**:
 #### Setup
 
 1. **Create virtual environment:**
+
    ```bash
    python -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
    ```
 
 2. **Install dependencies:**
+
    ```bash
    pip install -r requirements.txt
    ```
 
 3. **Set up environment:**
+
    ```bash
    cp .env.example .env
    # Edit .env with your database connection details
    ```
 
 4. **Start PostgreSQL and Weaviate (if not already running):**
+
    ```bash
    # Option A: Start only databases via Docker
    docker compose up -d postgres weaviate
-   
+
    # Option B: Use local PostgreSQL and Weaviate installations
    ```
 
@@ -107,14 +117,14 @@ The application can be run in **two ways**:
 
 ### Comparison
 
-| Feature | Docker | Direct Uvicorn |
-|---------|--------|----------------|
-| Setup Complexity | Easy (one command) | Requires manual DB setup |
-| Database Included | ✅ Yes | ❌ Need separate setup |
-| Hot Reload | ✅ Yes | ✅ Yes |
-| Isolation | ✅ Full | ❌ Uses system Python |
-| Production Ready | ✅ Yes | ⚠️ Need process manager |
-| Best For | Production, Team Dev | Local Development, Debugging |
+| Feature           | Docker               | Direct Uvicorn               |
+| ----------------- | -------------------- | ---------------------------- |
+| Setup Complexity  | Easy (one command)   | Requires manual DB setup     |
+| Database Included | ✅ Yes               | ❌ Need separate setup       |
+| Hot Reload        | ✅ Yes               | ✅ Yes                       |
+| Isolation         | ✅ Full              | ❌ Uses system Python        |
+| Production Ready  | ✅ Yes               | ⚠️ Need process manager      |
+| Best For          | Production, Team Dev | Local Development, Debugging |
 
 ## Project Structure
 
@@ -123,16 +133,34 @@ originhub-backend/
 ├── app/
 │   ├── __init__.py
 │   ├── main.py              # FastAPI app with CORS configuration
-│   ├── models.py            # Pydantic data models
+│   ├── database.py          # Database connection and session management
+│   ├── dependencies.py     # Authentication dependencies
+│   ├── models/              # SQLAlchemy database models
+│   │   ├── __init__.py
+│   │   ├── idea.py          # Idea model
+│   │   └── user.py           # User model
 │   ├── routes/              # API route handlers
 │   │   ├── __init__.py
 │   │   ├── chat.py          # Chat endpoints
-│   │   └── ideas.py         # Ideas endpoints
+│   │   ├── ideas.py         # Ideas endpoints (CRUD)
+│   │   └── webhooks.py       # Clerk webhook endpoints
+│   ├── schemas/             # Pydantic request/response schemas
+│   │   ├── __init__.py
+│   │   ├── chat.py
+│   │   ├── idea.py
+│   │   └── user.py
 │   └── services/            # Business logic layer
 │       ├── __init__.py
-│       └── ideas_service.py # Ideas service
-├── Dockerfile               # Docker configuration for API
-├── docker-compose.yml       # Docker Compose configuration
+│       ├── ideas_service.py # Ideas service
+│       ├── weaviate_client.py
+│       └── weaviate_service.py
+├── docker/                  # Docker configuration
+│   ├── Dockerfile
+│   ├── docker-compose.yml
+│   └── volumes/              # Database volumes
+├── migrations/              # Alembic database migrations
+│   ├── env.py
+│   └── versions/
 ├── requirements.txt         # Python dependencies
 ├── .env.example             # Environment variables template
 └── README.md
@@ -142,20 +170,30 @@ originhub-backend/
 
 ### Chat
 
-- **POST** `/api/chat`
+- **POST** `/chat`
   - Request body: `{ "message": "user message here" }`
   - Response: `{ "success": true, "data": { "response": "AI response here" }, "message": "..." }`
 
 ### Ideas
 
-- **GET** `/api/ideas`
+- **GET** `/ideas`
+
   - Query parameters:
-    - `search?` - Search query for filtering ideas
+    - `search?` - Search query for filtering ideas (searches title, description, problem, solution)
     - `tags?` - Comma-separated tags to filter by
     - `sort_by?` - Sort field (createdAt, title)
   - Response: `{ "success": true, "data": { "ideas": [...] }, "message": "..." }`
+  - Each idea includes: `id`, `title`, `description`, `problem`, `solution`, `marketSize`, `tags`, `author`, `createdAt`, `upvotes`, `views`, `status`, `user_id`, `link`
 
-- **POST** `/api/ideas`
+- **GET** `/ideas/{idea_id}`
+
+  - Get a single idea by ID
+  - Response: `{ "success": true, "data": { ...idea object... }, "message": "Idea retrieved successfully" }`
+  - Returns 404 if idea not found
+
+- **POST** `/ideas`
+
+  - Create a new idea
   - Request body:
     ```json
     {
@@ -165,15 +203,73 @@ originhub-backend/
       "solution": "Proposed solution",
       "marketSize": "Market size",
       "tags": ["tag1", "tag2"],
-      "author": "Author Name"
+      "author": "Author Name",
+      "link": "https://example.com" // optional
     }
     ```
   - Response: `{ "success": true, "data": { "id": "..." }, "message": "Idea created successfully" }`
+
+- **POST** `/ideas/add`
+
+  - Alternative endpoint for adding ideas with flexible structure
+  - Accepts additional fields: `id`, `upvotes`, `views`, `status`, `user_id`, `link`
+  - Same response format as POST `/ideas`
+
+- **PUT** `/ideas/{idea_id}` 🔒 **Requires Authentication**
+
+  - Update an idea (partial updates supported)
+  - **Headers**: `X-User-Id: <clerk_user_id>` (required)
+  - Request body (all fields optional):
+    ```json
+    {
+      "title": "Updated Title",
+      "description": "Updated description",
+      "problem": "Updated problem",
+      "solution": "Updated solution",
+      "marketSize": "Updated market size",
+      "tags": ["tag1", "tag2"],
+      "link": "https://example.com"
+    }
+    ```
+  - Response: `{ "success": true, "data": { ...updated idea... }, "message": "Idea updated successfully" }`
+  - Returns 403 if user is not the owner
+  - Returns 404 if idea not found
+
+- **DELETE** `/ideas/{idea_id}` 🔒 **Requires Authentication**
+  - Delete an idea
+  - **Headers**: `X-User-Id: <clerk_user_id>` (required)
+  - Response: `{ "success": true, "message": "Idea deleted successfully" }`
+  - Returns 403 if user is not the owner
+  - Returns 404 if idea not found
+
+### Webhooks
+
+- **POST** `/webhooks/clerk`
+  - Clerk webhook endpoint for user synchronization
+  - Handles `user.created`, `user.updated`, `user.deleted` events
+  - Requires `svix-id`, `svix-timestamp`, `svix-signature` headers for verification
 
 ### Health Check
 
 - **GET** `/` - Root endpoint
 - **GET** `/health` - Health check endpoint
+
+## Authentication
+
+Some endpoints require authentication via the `X-User-Id` header:
+
+- **Header**: `X-User-Id: <clerk_user_id>`
+- **Required for**: PUT `/ideas/{idea_id}`, DELETE `/ideas/{idea_id}`
+- **Ownership Verification**: The authenticated user's `clerk_user_id` must match the idea's `user_id` to update or delete
+
+**Example:**
+
+```bash
+curl -X PUT http://localhost:8000/ideas/{idea_id} \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: user_abc123" \
+  -d '{"title": "Updated Title"}'
+```
 
 ## Development Workflows
 
@@ -283,6 +379,12 @@ PostgreSQL is automatically set up via Docker Compose. Connection details:
 - **User**: `originhub` (default)
 - **Password**: `originhub123` (default - change in production!)
 
+**Note:** Database migrations are automatically run when the Docker container starts. If running locally, you may need to run migrations manually:
+
+```bash
+alembic upgrade head
+```
+
 ### Weaviate
 
 Weaviate is automatically set up via Docker Compose. Access:
@@ -301,12 +403,14 @@ Key environment variables (see `.env.example` for full list):
 - `POSTGRES_DB`: PostgreSQL database name
 - `WEAVIATE_URL`: Weaviate server URL
 - `DATABASE_URL`: Full PostgreSQL connection string
+- `CLERK_WEBHOOK_SECRET`: Secret for verifying Clerk webhook signatures (optional for development)
 
 ## Response Format
 
 All responses follow a consistent format:
 
 **Success Response:**
+
 ```json
 {
   "success": true,
@@ -316,24 +420,52 @@ All responses follow a consistent format:
 ```
 
 **Error Response:**
+FastAPI returns standard HTTP error responses:
+
 ```json
 {
-  "success": false,
-  "error": "Error message"
+  "detail": "Error message"
 }
 ```
 
-## Next Steps
+**Idea Response Format:**
+All idea responses include the `user_id` field (Clerk user ID) for ownership checking:
 
-Future enhancements planned:
-- [ ] Database integration (PostgreSQL)
-- [ ] Weaviate integration for semantic search
-- [ ] Authentication and authorization
-- [ ] Real AI integration for chat
-- [ ] User management
-- [ ] Idea voting and comments
-- [ ] File uploads
-- [ ] Advanced search and filtering
+```json
+{
+  "id": "uuid",
+  "title": "Idea Title",
+  "description": "Description",
+  "problem": "Problem statement",
+  "solution": "Solution",
+  "marketSize": "Market size",
+  "tags": ["tag1", "tag2"],
+  "author": "Author Name",
+  "createdAt": "2024-01-01T00:00:00Z",
+  "upvotes": 0,
+  "views": 0,
+  "status": "draft",
+  "user_id": "clerk_user_id_here", // For ownership checking
+  "link": "https://example.com"
+}
+```
+
+## Database Migrations
+
+The project uses Alembic for database migrations:
+
+```bash
+# Create a new migration
+alembic revision --autogenerate -m "description"
+
+# Apply migrations
+alembic upgrade head
+
+# Rollback last migration
+alembic downgrade -1
+```
+
+Migrations are automatically run when starting the Docker container.
 
 ## License
 
