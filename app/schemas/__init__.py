@@ -2,7 +2,19 @@
 Pydantic schemas for request/response validation
 """
 
-from app.schemas.chat import ChatRequest, ChatResponse
+from app.schemas.chat import (
+    ChatRequest,
+    ChatResponse,
+    ChatBase,
+    ChatCreate,
+    ChatListResponse,
+    MessageBase,
+    MessageCreate,
+    MessageResponse,
+    MessageListResponse,
+    ChatSendResponse,
+    ChatSummaryResponse,
+)
 from app.schemas.idea import (
     IdeaCreate,
     IdeaResponse,
@@ -18,6 +30,15 @@ __all__ = [
     # Chat schemas
     "ChatRequest",
     "ChatResponse",
+    "ChatBase",
+    "ChatCreate",
+    "ChatListResponse",
+    "MessageBase",
+    "MessageCreate",
+    "MessageResponse",
+    "MessageListResponse",
+    "ChatSendResponse",
+    "ChatSummaryResponse",
     # Idea schemas
     "IdeaCreate",
     "IdeaResponse",
