@@ -9,6 +9,7 @@ from app.schemas import (
     MessageListResponse,
     ChatSendResponse,
     ChatSummaryResponse,
+    ChatDeleteResponse,
 )
 from app.services.chat_service import chat_service
 from app.dependencies import get_current_user_id
@@ -197,6 +198,39 @@ async def summarize_chat(
             message="Summary generated successfully",
         )
 
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.delete("/{chat_id}", response_model=ChatDeleteResponse, status_code=200)
+async def delete_chat(chat_id: str, user_id: str = Depends(get_current_user_id)):
+    """
+    Delete a chat and all its messages. Only the owner can delete their chat.
+
+    Messages are automatically deleted due to CASCADE foreign key constraint.
+    Requires authentication via X-User-Id header.
+    Returns 403 Forbidden if the user is not the owner.
+    Returns 404 Not Found if the chat doesn't exist.
+    """
+    try:
+        # Delete the chat (service will check ownership)
+        chat_service.delete_chat(chat_id=chat_id, user_id=user_id)
+
+        return ChatDeleteResponse(success=True, message="Chat deleted successfully")
+
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise HTTPException(status_code=404, detail=error_msg)
+        elif (
+            "permission" in error_msg.lower()
+            or "not have permission" in error_msg.lower()
+        ):
+            raise HTTPException(status_code=403, detail=error_msg)
+        else:
+            raise HTTPException(status_code=400, detail=error_msg)
     except HTTPException:
         raise
     except Exception as e:

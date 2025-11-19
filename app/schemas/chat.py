@@ -99,3 +99,10 @@ class ChatSummaryResponse(BaseModel):
     success: bool = True
     data: dict
     message: Optional[str] = None
+
+
+class ChatDeleteResponse(BaseModel):
+    """Response schema for chat deletion"""
+
+    success: bool = True
+    message: str = "Chat deleted successfully"

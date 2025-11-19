@@ -315,6 +315,43 @@ class ChatService:
         return {"chat_id": chat_id, "reply": ai_response}
 
     @staticmethod
+    def delete_chat(chat_id: str, user_id: str) -> None:
+        """
+        Delete a chat and all its messages. Only the owner can delete their chat.
+        Messages are automatically deleted due to CASCADE foreign key constraint.
+
+        Args:
+            chat_id: UUID of the chat to delete
+            user_id: Clerk user ID of the authenticated user (for ownership check)
+
+        Raises:
+            ValueError: If chat not found or user is not the owner
+        """
+        db = SessionLocal()
+        try:
+            # Get the chat and verify ownership
+            chat = db.query(Chat).filter(Chat.id == chat_id).first()
+            if not chat:
+                raise ValueError(f"Chat with id {chat_id} not found")
+
+            # Check ownership
+            if chat.user_id != user_id:
+                raise ValueError("You do not have permission to delete this chat")
+
+            # Delete the chat (messages will be automatically deleted due to CASCADE)
+            db.delete(chat)
+            db.commit()
+
+        except ValueError:
+            db.rollback()
+            raise
+        except Exception as e:
+            db.rollback()
+            raise Exception(f"Error deleting chat: {str(e)}")
+        finally:
+            db.close()
+
+    @staticmethod
     async def generate_chat_summary(chat_id: str) -> str:
         """
         Generate a summary for a chat conversation.

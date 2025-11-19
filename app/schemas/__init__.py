@@ -14,6 +14,7 @@ from app.schemas.chat import (
     MessageListResponse,
     ChatSendResponse,
     ChatSummaryResponse,
+    ChatDeleteResponse,
 )
 from app.schemas.idea import (
     IdeaCreate,
@@ -39,6 +40,7 @@ __all__ = [
     "MessageListResponse",
     "ChatSendResponse",
     "ChatSummaryResponse",
+    "ChatDeleteResponse",
     # Idea schemas
     "IdeaCreate",
     "IdeaResponse",
