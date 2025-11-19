@@ -300,6 +300,129 @@ class IdeasService:
         finally:
             db.close()
 
+    @staticmethod
+    def get_idea_by_id(idea_id: str) -> Optional[Dict]:
+        """
+        Get a single idea by ID from PostgreSQL.
+
+        Args:
+            idea_id: UUID of the idea to retrieve
+
+        Returns:
+            Dictionary with idea data, or None if not found
+        """
+        db = SessionLocal()
+        try:
+            idea = db.query(Idea).filter(Idea.id == idea_id).first()
+            if not idea:
+                return None
+            return IdeasService._convert_model_to_dict(idea)
+        finally:
+            db.close()
+
+    @staticmethod
+    def update_idea(idea_id: str, update_data: Dict, user_id: str) -> Dict:
+        """
+        Update an idea in PostgreSQL. Only the owner can update their idea.
+
+        Args:
+            idea_id: UUID of the idea to update
+            update_data: Dictionary with fields to update (partial updates supported)
+            user_id: Clerk user ID of the authenticated user (for ownership check)
+
+        Returns:
+            Dictionary with the updated idea data
+
+        Raises:
+            ValueError: If idea not found or user is not the owner
+        """
+        db = SessionLocal()
+        try:
+            # Get the idea
+            idea = db.query(Idea).filter(Idea.id == idea_id).first()
+            if not idea:
+                raise ValueError(f"Idea with id {idea_id} not found")
+
+            # Check ownership
+            if idea.user_id != user_id:
+                raise ValueError("You do not have permission to update this idea")
+
+            # Update allowed fields (partial update)
+            allowed_fields = [
+                "title",
+                "description",
+                "problem",
+                "solution",
+                "marketSize",
+                "tags",
+                "link",
+            ]
+
+            for field in allowed_fields:
+                if field in update_data:
+                    if field == "marketSize":
+                        # Handle camelCase to snake_case conversion
+                        setattr(idea, "marketSize", update_data[field])
+                    elif field == "tags":
+                        # Ensure tags is a list
+                        tags_list = update_data[field]
+                        if not isinstance(tags_list, list):
+                            tags_list = []
+                        setattr(idea, "tags", tags_list)
+                    else:
+                        setattr(idea, field, update_data[field])
+
+            # Commit changes
+            db.commit()
+            db.refresh(idea)
+
+            return IdeasService._convert_model_to_dict(idea)
+
+        except ValueError:
+            db.rollback()
+            raise
+        except Exception as e:
+            db.rollback()
+            raise Exception(f"Error updating idea: {str(e)}")
+        finally:
+            db.close()
+
+    @staticmethod
+    def delete_idea(idea_id: str, user_id: str) -> None:
+        """
+        Delete an idea from PostgreSQL. Only the owner can delete their idea.
+
+        Args:
+            idea_id: UUID of the idea to delete
+            user_id: Clerk user ID of the authenticated user (for ownership check)
+
+        Raises:
+            ValueError: If idea not found or user is not the owner
+        """
+        db = SessionLocal()
+        try:
+            # Get the idea
+            idea = db.query(Idea).filter(Idea.id == idea_id).first()
+            if not idea:
+                raise ValueError(f"Idea with id {idea_id} not found")
+
+            # Check ownership
+            if idea.user_id != user_id:
+                raise ValueError("You do not have permission to delete this idea")
+
+            # Delete the idea
+            db.delete(idea)
+            db.commit()
+
+        except ValueError:
+            db.rollback()
+            raise
+        except Exception as e:
+            db.rollback()
+            raise Exception(f"Error deleting idea: {str(e)}")
+        finally:
+            db.close()
+
 
 # Create a singleton instance for easy import
 ideas_service = IdeasService()

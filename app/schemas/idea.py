@@ -40,7 +40,34 @@ class IdeaListResponse(BaseModel):
     message: Optional[str] = None
 
 
+class IdeaUpdate(BaseModel):
+    """Schema for partial idea updates"""
+
+    title: Optional[str] = Field(None, description="Idea title")
+    description: Optional[str] = Field(None, description="Idea description")
+    problem: Optional[str] = Field(None, description="Problem statement")
+    solution: Optional[str] = Field(None, description="Proposed solution")
+    marketSize: Optional[str] = Field(None, description="Market size")
+    tags: Optional[List[str]] = Field(None, description="Tags for the idea")
+    link: Optional[str] = Field(None, description="Link to the idea")
+
+
 class IdeaCreateResponse(BaseModel):
     success: bool = True
     data: dict
     message: str = "Idea created successfully"
+
+
+class IdeaDetailResponse(BaseModel):
+    """Response for single idea retrieval"""
+
+    success: bool = True
+    data: IdeaResponse
+    message: Optional[str] = None
+
+
+class IdeaDeleteResponse(BaseModel):
+    """Response for idea deletion"""
+
+    success: bool = True
+    message: str = "Idea deleted successfully"

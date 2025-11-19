@@ -8,6 +8,9 @@ from app.schemas.idea import (
     IdeaResponse,
     IdeaListResponse,
     IdeaCreateResponse,
+    IdeaUpdate,
+    IdeaDetailResponse,
+    IdeaDeleteResponse,
 )
 from app.schemas.user import UserBase, UserResponse, UserCreate, UserUpdate
 
@@ -20,6 +23,9 @@ __all__ = [
     "IdeaResponse",
     "IdeaListResponse",
     "IdeaCreateResponse",
+    "IdeaUpdate",
+    "IdeaDetailResponse",
+    "IdeaDeleteResponse",
     # User schemas
     "UserBase",
     "UserResponse",

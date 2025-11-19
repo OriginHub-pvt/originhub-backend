@@ -1,7 +1,16 @@
-from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi import APIRouter, HTTPException, Query, Body, Depends
 from typing import Optional, Dict, Any
-from app.schemas import IdeaCreate, IdeaListResponse, IdeaCreateResponse
+from app.schemas import (
+    IdeaCreate,
+    IdeaListResponse,
+    IdeaCreateResponse,
+    IdeaUpdate,
+    IdeaDetailResponse,
+    IdeaResponse,
+    IdeaDeleteResponse,
+)
 from app.services.ideas_service import ideas_service
+from app.dependencies import get_current_user_id
 
 router = APIRouter(prefix="/ideas", tags=["ideas"])
 
@@ -103,6 +112,112 @@ async def add_idea(idea_data: Dict[str, Any] = Body(...)):
             message="Idea added successfully to PostgreSQL",
         )
 
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.get("/{idea_id}", response_model=IdeaDetailResponse)
+async def get_idea_by_id(idea_id: str):
+    """
+    Get a single idea by ID from the database.
+    Returns all idea data including user_id for ownership checking.
+    """
+    try:
+        idea = ideas_service.get_idea_by_id(idea_id)
+
+        if not idea:
+            raise HTTPException(
+                status_code=404, detail=f"Idea with id {idea_id} not found"
+            )
+
+        return IdeaDetailResponse(
+            success=True,
+            data=IdeaResponse(**idea),
+            message="Idea retrieved successfully",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.put("/{idea_id}", response_model=IdeaDetailResponse)
+async def update_idea(
+    idea_id: str, idea_update: IdeaUpdate, user_id: str = Depends(get_current_user_id)
+):
+    """
+    Update an idea. Only the owner can update their idea.
+
+    Requires authentication via X-User-Id header.
+    Returns 403 Forbidden if the user is not the owner.
+
+    Supports partial updates - only include fields you want to update.
+    """
+    try:
+        # Convert Pydantic model to dict, excluding None values
+        update_data = idea_update.model_dump(exclude_unset=True)
+
+        # If no fields to update, return error
+        if not update_data:
+            raise HTTPException(status_code=400, detail="No fields provided for update")
+
+        # Update the idea (service will check ownership)
+        updated_idea = ideas_service.update_idea(
+            idea_id=idea_id, update_data=update_data, user_id=user_id
+        )
+
+        return IdeaDetailResponse(
+            success=True,
+            data=IdeaResponse(**updated_idea),
+            message="Idea updated successfully",
+        )
+
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise HTTPException(status_code=404, detail=error_msg)
+        elif (
+            "permission" in error_msg.lower()
+            or "not have permission" in error_msg.lower()
+        ):
+            raise HTTPException(status_code=403, detail=error_msg)
+        else:
+            raise HTTPException(status_code=400, detail=error_msg)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.delete("/{idea_id}", response_model=IdeaDeleteResponse, status_code=200)
+async def delete_idea(idea_id: str, user_id: str = Depends(get_current_user_id)):
+    """
+    Delete an idea. Only the owner can delete their idea.
+
+    Requires authentication via X-User-Id header.
+    Returns 403 Forbidden if the user is not the owner.
+    Returns 404 Not Found if the idea doesn't exist.
+    """
+    try:
+        # Delete the idea (service will check ownership)
+        ideas_service.delete_idea(idea_id=idea_id, user_id=user_id)
+
+        return IdeaDeleteResponse(success=True, message="Idea deleted successfully")
+
+    except ValueError as e:
+        error_msg = str(e)
+        if "not found" in error_msg.lower():
+            raise HTTPException(status_code=404, detail=error_msg)
+        elif (
+            "permission" in error_msg.lower()
+            or "not have permission" in error_msg.lower()
+        ):
+            raise HTTPException(status_code=403, detail=error_msg)
+        else:
+            raise HTTPException(status_code=400, detail=error_msg)
     except HTTPException:
         raise
     except Exception as e:
