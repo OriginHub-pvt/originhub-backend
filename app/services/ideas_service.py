@@ -321,6 +321,35 @@ class IdeasService:
             db.close()
 
     @staticmethod
+    def increment_views(idea_id: str) -> Optional[Dict]:
+        """
+        Increment the view count for an idea by 1.
+
+        Args:
+            idea_id: UUID of the idea
+
+        Returns:
+            Dictionary with updated idea data, or None if not found
+        """
+        db = SessionLocal()
+        try:
+            idea = db.query(Idea).filter(Idea.id == idea_id).first()
+            if not idea:
+                return None
+
+            # Increment views
+            idea.views += 1
+            db.commit()
+            db.refresh(idea)
+
+            return IdeasService._convert_model_to_dict(idea)
+        except Exception as e:
+            db.rollback()
+            raise Exception(f"Error incrementing views: {str(e)}")
+        finally:
+            db.close()
+
+    @staticmethod
     def update_idea(idea_id: str, update_data: Dict, user_id: str) -> Dict:
         """
         Update an idea in PostgreSQL. Only the owner can update their idea.

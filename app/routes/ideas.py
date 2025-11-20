@@ -144,6 +144,34 @@ async def get_idea_by_id(idea_id: str):
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
+@router.post("/{idea_id}/view", response_model=IdeaDetailResponse)
+async def increment_idea_views(idea_id: str):
+    """
+    Increment the view count for an idea by 1.
+    Each time this endpoint is called, the idea's view count increases by 1.
+    
+    No authentication required - anyone can view ideas.
+    """
+    try:
+        updated_idea = ideas_service.increment_views(idea_id)
+
+        if not updated_idea:
+            raise HTTPException(
+                status_code=404, detail=f"Idea with id {idea_id} not found"
+            )
+
+        return IdeaDetailResponse(
+            success=True,
+            data=IdeaResponse(**updated_idea),
+            message="View count incremented successfully",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
 @router.put("/{idea_id}", response_model=IdeaDetailResponse)
 async def update_idea(
     idea_id: str, idea_update: IdeaUpdate, user_id: str = Depends(get_current_user_id)
