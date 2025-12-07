@@ -14,3 +14,6 @@ svix==1.21.0
 # Weaviate
 weaviate-client==3.25.3
 
+# LLM (Optional - for AI chat features)
+openai>=1.0.0
+

@@ -11,6 +11,7 @@ from app.schemas import (
 )
 from app.services.ideas_service import ideas_service
 from app.dependencies import get_current_user_id
+from app.routes.websocket import broadcast_upvote_update, broadcast_view_update
 
 router = APIRouter(prefix="/ideas", tags=["ideas"])
 
@@ -140,6 +141,224 @@ async def get_idea_by_id(idea_id: str):
 
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.post("/{idea_id}/view", response_model=IdeaDetailResponse)
+async def increment_idea_views(idea_id: str):
+    """
+    Increment the view count for an idea by 1.
+    Each time this endpoint is called, the idea's view count increases by 1.
+    
+    No authentication required - anyone can view ideas.
+    """
+    try:
+        updated_idea = ideas_service.increment_views(idea_id)
+
+        if not updated_idea:
+            raise HTTPException(
+                status_code=404, detail=f"Idea with id {idea_id} not found"
+            )
+
+        # Broadcast real-time update to WebSocket clients
+        try:
+            await broadcast_view_update(
+                idea_id=idea_id,
+                views=updated_idea["views"]
+            )
+        except Exception as e:
+            # Don't fail the request if WebSocket broadcast fails
+            print(f"WebSocket broadcast error: {e}")
+
+        return IdeaDetailResponse(
+            success=True,
+            data=IdeaResponse(**updated_idea),
+            message="View count incremented successfully",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.post("/{idea_id}/upvote", response_model=IdeaDetailResponse)
+async def increment_idea_upvotes(
+    idea_id: str, user_id: str = Depends(get_current_user_id)
+):
+    """
+    Add an upvote for an idea by the authenticated user.
+    Tracks which user upvoted which idea to prevent duplicate upvotes.
+    
+    Requires authentication via X-User-Id header.
+    Returns 400 if user has already upvoted this idea.
+    """
+    try:
+        updated_idea = ideas_service.increment_upvotes(idea_id, user_id)
+
+        if not updated_idea:
+            raise HTTPException(
+                status_code=404, detail=f"Idea with id {idea_id} not found"
+            )
+
+        # Broadcast real-time update to WebSocket clients
+        try:
+            await broadcast_upvote_update(
+                idea_id=idea_id,
+                upvotes=updated_idea["upvotes"],
+                user_id=user_id,
+                action="upvoted"
+            )
+        except Exception as e:
+            # Don't fail the request if WebSocket broadcast fails
+            print(f"WebSocket broadcast error: {e}")
+
+        return IdeaDetailResponse(
+            success=True,
+            data=IdeaResponse(**updated_idea),
+            message="Upvote added successfully",
+        )
+
+    except ValueError as e:
+        error_msg = str(e)
+        if "already upvoted" in error_msg.lower():
+            raise HTTPException(status_code=400, detail=error_msg)
+        raise HTTPException(status_code=400, detail=error_msg)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.delete("/{idea_id}/upvote", response_model=IdeaDetailResponse)
+async def decrement_idea_upvotes(
+    idea_id: str, user_id: str = Depends(get_current_user_id)
+):
+    """
+    Remove an upvote for an idea by the authenticated user.
+    Deletes the upvote record and decrements the upvote count.
+    
+    Requires authentication via X-User-Id header.
+    Returns 400 if user has not upvoted this idea.
+    """
+    try:
+        updated_idea = ideas_service.decrement_upvotes(idea_id, user_id)
+
+        if not updated_idea:
+            raise HTTPException(
+                status_code=404, detail=f"Idea with id {idea_id} not found"
+            )
+
+        # Broadcast real-time update to WebSocket clients
+        try:
+            await broadcast_upvote_update(
+                idea_id=idea_id,
+                upvotes=updated_idea["upvotes"],
+                user_id=user_id,
+                action="removed_upvote"
+            )
+        except Exception as e:
+            # Don't fail the request if WebSocket broadcast fails
+            print(f"WebSocket broadcast error: {e}")
+
+        return IdeaDetailResponse(
+            success=True,
+            data=IdeaResponse(**updated_idea),
+            message="Upvote removed successfully",
+        )
+
+    except ValueError as e:
+        error_msg = str(e)
+        if "not upvoted" in error_msg.lower():
+            raise HTTPException(status_code=400, detail=error_msg)
+        raise HTTPException(status_code=400, detail=error_msg)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.get("/upvoted", response_model=IdeaListResponse)
+async def get_user_upvoted_ideas(user_id: str = Depends(get_current_user_id)):
+    """
+    Get all ideas that the authenticated user has upvoted.
+    
+    Requires authentication via X-User-Id header.
+    """
+    try:
+        upvoted_idea_ids = ideas_service.get_user_upvoted_ideas(user_id)
+        
+        if not upvoted_idea_ids:
+            return IdeaListResponse(
+                success=True,
+                data=[],
+                total=0,
+                message="No upvoted ideas found",
+            )
+
+        # Fetch all upvoted ideas
+        ideas = []
+        for idea_id in upvoted_idea_ids:
+            idea = ideas_service.get_idea_by_id(idea_id)
+            if idea:
+                ideas.append(IdeaResponse(**idea))
+
+        return IdeaListResponse(
+            success=True,
+            data=ideas,
+            total=len(ideas),
+            message=f"Found {len(ideas)} upvoted ideas",
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.get("/{idea_id}/upvote-status")
+async def get_upvote_status(
+    idea_id: str, user_id: str = Depends(get_current_user_id)
+):
+    """
+    Check if the authenticated user has upvoted a specific idea.
+    
+    Requires authentication via X-User-Id header.
+    """
+    try:
+        has_upvoted = ideas_service.has_user_upvoted(idea_id, user_id)
+        
+        return {
+            "success": True,
+            "idea_id": idea_id,
+            "has_upvoted": has_upvoted,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.post("/sync-upvote-counts")
+async def sync_all_upvote_counts():
+    """
+    Admin endpoint to recalculate and sync all upvote counts from the idea_upvotes table.
+    Useful for data integrity checks or after migrations.
+    
+    Note: This is a maintenance endpoint. Consider adding authentication/authorization.
+    """
+    try:
+        synced_counts = ideas_service.sync_all_upvote_counts()
+        
+        return {
+            "success": True,
+            "message": f"Synced upvote counts for {len(synced_counts)} ideas",
+            "synced_ideas": len(synced_counts),
+            "counts": synced_counts,
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 

@@ -2,6 +2,7 @@ from typing import List, Dict, Optional
 from app.schemas import IdeaCreate
 from app.models.idea import Idea
 from app.models.user import User
+from app.models.idea_upvote import IdeaUpvote
 from app.database import SessionLocal
 from sqlalchemy import or_, func
 import uuid
@@ -107,7 +108,31 @@ class IdeasService:
 
             # Execute query and convert to dictionaries
             ideas = query.all()
-            return [IdeasService._convert_model_to_dict(idea) for idea in ideas]
+
+            # Calculate upvote counts from idea_upvotes table for accuracy
+            # Also sync the column value for future queries
+            idea_dicts = []
+            for idea in ideas:
+                idea_dict = IdeasService._convert_model_to_dict(idea)
+                # Calculate actual upvote count from table
+                actual_upvote_count = (
+                    db.query(func.count(IdeaUpvote.id))
+                    .filter(IdeaUpvote.idea_id == idea.id)
+                    .scalar()
+                ) or 0
+
+                # Sync the column value if it's different (for future queries)
+                if idea.upvotes != actual_upvote_count:
+                    idea.upvotes = actual_upvote_count
+
+                # Update the upvote count in the returned data
+                idea_dict["upvotes"] = actual_upvote_count
+                idea_dicts.append(idea_dict)
+
+            # Commit any column updates
+            db.commit()
+
+            return idea_dicts
 
         finally:
             db.close()
@@ -304,6 +329,7 @@ class IdeasService:
     def get_idea_by_id(idea_id: str) -> Optional[Dict]:
         """
         Get a single idea by ID from PostgreSQL.
+        Calculates upvote count from idea_upvotes table for accuracy.
 
         Args:
             idea_id: UUID of the idea to retrieve
@@ -316,7 +342,258 @@ class IdeasService:
             idea = db.query(Idea).filter(Idea.id == idea_id).first()
             if not idea:
                 return None
+
+            idea_dict = IdeasService._convert_model_to_dict(idea)
+
+            # Calculate actual upvote count from table for accuracy
+            actual_upvote_count = (
+                db.query(func.count(IdeaUpvote.id))
+                .filter(IdeaUpvote.idea_id == idea_id)
+                .scalar()
+            ) or 0
+
+            # Sync the column value if it's different (for future queries)
+            if idea.upvotes != actual_upvote_count:
+                idea.upvotes = actual_upvote_count
+                db.commit()
+
+            # Update the upvote count in the returned data
+            idea_dict["upvotes"] = actual_upvote_count
+
+            return idea_dict
+        finally:
+            db.close()
+
+    @staticmethod
+    def increment_views(idea_id: str) -> Optional[Dict]:
+        """
+        Increment the view count for an idea by 1.
+
+        Args:
+            idea_id: UUID of the idea
+
+        Returns:
+            Dictionary with updated idea data, or None if not found
+        """
+        db = SessionLocal()
+        try:
+            idea = db.query(Idea).filter(Idea.id == idea_id).first()
+            if not idea:
+                return None
+
+            # Increment views
+            idea.views += 1
+            db.commit()
+            db.refresh(idea)
+
             return IdeasService._convert_model_to_dict(idea)
+        except Exception as e:
+            db.rollback()
+            raise Exception(f"Error incrementing views: {str(e)}")
+        finally:
+            db.close()
+
+    @staticmethod
+    def has_user_upvoted(idea_id: str, user_id: str) -> bool:
+        """
+        Check if a user has already upvoted an idea.
+
+        Args:
+            idea_id: UUID of the idea
+            user_id: Clerk user ID
+
+        Returns:
+            True if user has upvoted, False otherwise
+        """
+        db = SessionLocal()
+        try:
+            upvote = (
+                db.query(IdeaUpvote)
+                .filter(IdeaUpvote.idea_id == idea_id, IdeaUpvote.user_id == user_id)
+                .first()
+            )
+            return upvote is not None
+        finally:
+            db.close()
+
+    @staticmethod
+    def _sync_upvote_count(db, idea_id: str) -> int:
+        """
+        Calculate and sync the upvote count for an idea from the idea_upvotes table.
+        Updates the ideas.upvotes column to match the actual count.
+
+        Args:
+            db: Database session
+            idea_id: UUID of the idea
+
+        Returns:
+            The actual upvote count
+        """
+        # Count upvotes from the table
+        actual_count = (
+            db.query(func.count(IdeaUpvote.id))
+            .filter(IdeaUpvote.idea_id == idea_id)
+            .scalar()
+        ) or 0
+
+        # Update the idea's upvote count
+        idea = db.query(Idea).filter(Idea.id == idea_id).first()
+        if idea:
+            idea.upvotes = actual_count
+
+        return actual_count
+
+    @staticmethod
+    def increment_upvotes(idea_id: str, user_id: str) -> Optional[Dict]:
+        """
+        Add an upvote for an idea by a user.
+        Creates an upvote record in idea_upvotes table and syncs the count.
+        Prevents duplicate upvotes from the same user.
+
+        Args:
+            idea_id: UUID of the idea
+            user_id: Clerk user ID
+
+        Returns:
+            Dictionary with updated idea data, or None if not found
+
+        Raises:
+            ValueError: If user has already upvoted this idea
+        """
+        db = SessionLocal()
+        try:
+            idea = db.query(Idea).filter(Idea.id == idea_id).first()
+            if not idea:
+                return None
+
+            # Check if user already upvoted
+            existing_upvote = (
+                db.query(IdeaUpvote)
+                .filter(IdeaUpvote.idea_id == idea_id, IdeaUpvote.user_id == user_id)
+                .first()
+            )
+
+            if existing_upvote:
+                raise ValueError("User has already upvoted this idea")
+
+            # Create upvote record
+            upvote = IdeaUpvote(
+                id=str(uuid.uuid4()),
+                user_id=user_id,
+                idea_id=idea_id,
+                created_at=datetime.utcnow(),
+            )
+            db.add(upvote)
+
+            # Sync upvote count from table (ensures accuracy)
+            IdeasService._sync_upvote_count(db, idea_id)
+
+            db.commit()
+            db.refresh(idea)
+
+            return IdeasService._convert_model_to_dict(idea)
+        except ValueError:
+            db.rollback()
+            raise
+        except Exception as e:
+            db.rollback()
+            raise Exception(f"Error incrementing upvotes: {str(e)}")
+        finally:
+            db.close()
+
+    @staticmethod
+    def decrement_upvotes(idea_id: str, user_id: str) -> Optional[Dict]:
+        """
+        Remove an upvote for an idea by a user.
+        Deletes the upvote record from idea_upvotes table and syncs the count.
+
+        Args:
+            idea_id: UUID of the idea
+            user_id: Clerk user ID
+
+        Returns:
+            Dictionary with updated idea data, or None if not found
+
+        Raises:
+            ValueError: If user has not upvoted this idea
+        """
+        db = SessionLocal()
+        try:
+            idea = db.query(Idea).filter(Idea.id == idea_id).first()
+            if not idea:
+                return None
+
+            # Find and delete upvote record
+            upvote = (
+                db.query(IdeaUpvote)
+                .filter(IdeaUpvote.idea_id == idea_id, IdeaUpvote.user_id == user_id)
+                .first()
+            )
+
+            if not upvote:
+                raise ValueError("User has not upvoted this idea")
+
+            # Delete upvote record
+            db.delete(upvote)
+
+            # Sync upvote count from table (ensures accuracy)
+            IdeasService._sync_upvote_count(db, idea_id)
+
+            db.commit()
+            db.refresh(idea)
+
+            return IdeasService._convert_model_to_dict(idea)
+        except ValueError:
+            db.rollback()
+            raise
+        except Exception as e:
+            db.rollback()
+            raise Exception(f"Error decrementing upvotes: {str(e)}")
+        finally:
+            db.close()
+
+    @staticmethod
+    def get_user_upvoted_ideas(user_id: str) -> List[str]:
+        """
+        Get list of idea IDs that a user has upvoted.
+
+        Args:
+            user_id: Clerk user ID
+
+        Returns:
+            List of idea IDs (UUIDs as strings)
+        """
+        db = SessionLocal()
+        try:
+            upvotes = db.query(IdeaUpvote).filter(IdeaUpvote.user_id == user_id).all()
+            return [str(upvote.idea_id) for upvote in upvotes]
+        finally:
+            db.close()
+
+    @staticmethod
+    def sync_all_upvote_counts() -> Dict[str, int]:
+        """
+        Recalculate and sync upvote counts for all ideas from the idea_upvotes table.
+        Useful for data integrity checks or after migrations.
+
+        Returns:
+            Dictionary mapping idea_id to upvote count
+        """
+        db = SessionLocal()
+        try:
+            # Get all ideas
+            ideas = db.query(Idea).all()
+            synced_counts = {}
+
+            for idea in ideas:
+                actual_count = IdeasService._sync_upvote_count(db, idea.id)
+                synced_counts[str(idea.id)] = actual_count
+
+            db.commit()
+            return synced_counts
+        except Exception as e:
+            db.rollback()
+            raise Exception(f"Error syncing upvote counts: {str(e)}")
         finally:
             db.close()
 
