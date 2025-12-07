@@ -1,18 +1,17 @@
-options:
-  logging: CLOUD_LOGGING_ONLY
-
 steps:
-  # Step 1: Build Docker image
+  # Step 1: Build the Docker image
   - name: "gcr.io/cloud-builders/docker"
     args:
       [
         "build",
         "-t",
         "us-central1-docker.pkg.dev/$PROJECT_ID/backend/backend:$COMMIT_SHA",
-        ".",
+        "-f",
+        "docker/Dockerfile",
+        "docker/",
       ]
 
-  # Step 2: Push Docker image to Artifact Registry
+  # Step 2: Push the Docker image to Artifact Registry
   - name: "gcr.io/cloud-builders/docker"
     args:
       [
@@ -20,14 +19,8 @@ steps:
         "us-central1-docker.pkg.dev/$PROJECT_ID/backend/backend:$COMMIT_SHA",
       ]
 
-# Optional Step 3: Auto-deploy to GKE (uncomment once confirmed working)
-#  - name: 'gcr.io/cloud-builders/gcloud'
-#    args:
-#      [
-#        'kubectl', 'set', 'image',
-#        'deployment/backend',
-#        'backend=us-central1-docker.pkg.dev/$PROJECT_ID/backend/backend:$COMMIT_SHA'
-#      ]
-
 images:
   - "us-central1-docker.pkg.dev/$PROJECT_ID/backend/backend:$COMMIT_SHA"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
