@@ -1,0 +1,31 @@
+steps:
+  # Step 1: Build the Docker image
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "build",
+        "-t",
+        "us-central1-docker.pkg.dev/$PROJECT_ID/backend/backend:$COMMIT_SHA",
+        ".",
+      ]
+
+  # Step 2: Push the Docker image to Artifact Registry
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      [
+        "push",
+        "us-central1-docker.pkg.dev/$PROJECT_ID/backend/backend:$COMMIT_SHA",
+      ]
+
+# Step 3: (Optional) Deploy new image to GKE automatically
+# Uncomment if you want auto-deploy:
+#  - name: 'gcr.io/cloud-builders/gcloud'
+#    args:
+#      [
+#        'kubectl', 'set', 'image',
+#        'deployment/backend',
+#        'backend=us-central1-docker.pkg.dev/$PROJECT_ID/backend/backend:$COMMIT_SHA'
+#      ]
+
+images:
+  - "us-central1-docker.pkg.dev/$PROJECT_ID/backend/backend:$COMMIT_SHA"
