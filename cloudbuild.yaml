@@ -1,14 +1,14 @@
 steps:
   # Step 1: Build the Docker image
   - name: "gcr.io/cloud-builders/docker"
-    args:
-      [
+    args: [
         "build",
         "-t",
         "us-central1-docker.pkg.dev/$PROJECT_ID/backend/backend:$COMMIT_SHA",
         "-f",
         "docker/Dockerfile",
-        "docker/",
+        # "docker/",
+        ".",
       ]
 
   # Step 2: Push the Docker image to Artifact Registry
