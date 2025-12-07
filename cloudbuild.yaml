@@ -1,5 +1,8 @@
+options:
+  logging: CLOUD_LOGGING_ONLY
+
 steps:
-  # Step 1: Build the Docker image
+  # Step 1: Build Docker image
   - name: "gcr.io/cloud-builders/docker"
     args:
       [
@@ -9,7 +12,7 @@ steps:
         ".",
       ]
 
-  # Step 2: Push the Docker image to Artifact Registry
+  # Step 2: Push Docker image to Artifact Registry
   - name: "gcr.io/cloud-builders/docker"
     args:
       [
@@ -17,8 +20,7 @@ steps:
         "us-central1-docker.pkg.dev/$PROJECT_ID/backend/backend:$COMMIT_SHA",
       ]
 
-# Step 3: (Optional) Deploy new image to GKE automatically
-# Uncomment if you want auto-deploy:
+# Optional Step 3: Auto-deploy to GKE (uncomment once confirmed working)
 #  - name: 'gcr.io/cloud-builders/gcloud'
 #    args:
 #      [
