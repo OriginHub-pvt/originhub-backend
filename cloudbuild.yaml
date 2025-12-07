@@ -19,6 +19,16 @@ steps:
         "us-central1-docker.pkg.dev/$PROJECT_ID/backend/backend:$COMMIT_SHA",
       ]
 
+  - name: "gcr.io/cloud-builders/gcloud"
+    args:
+      [
+        "kubectl",
+        "set",
+        "image",
+        "deployment/backend",
+        "backend=us-central1-docker.pkg.dev/$PROJECT_ID/backend/backend:$COMMIT_SHA",
+      ]
+
 images:
   - "us-central1-docker.pkg.dev/$PROJECT_ID/backend/backend:$COMMIT_SHA"
 
