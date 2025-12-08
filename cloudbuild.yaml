@@ -1,17 +1,17 @@
 steps:
-  # Step 1: Build the Docker image
+  # Build the Docker image
   - name: "gcr.io/cloud-builders/docker"
-    args: [
+    args:
+      [
         "build",
         "-t",
         "us-central1-docker.pkg.dev/$PROJECT_ID/backend/backend:$COMMIT_SHA",
         "-f",
         "docker/Dockerfile",
-        # "docker/",
         ".",
       ]
 
-  # Step 2: Push the Docker image to Artifact Registry
+  # Push the tagged image
   - name: "gcr.io/cloud-builders/docker"
     args:
       [
@@ -19,6 +19,7 @@ steps:
         "us-central1-docker.pkg.dev/$PROJECT_ID/backend/backend:$COMMIT_SHA",
       ]
 
+  # Deploy to GKE
   - name: "gcr.io/cloud-builders/gcloud"
     args:
       [
