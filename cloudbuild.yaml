@@ -19,6 +19,16 @@ steps:
         "us-central1-docker.pkg.dev/$PROJECT_ID/backend/backend:$COMMIT_SHA",
       ]
 
+  # Authenticate kubectl to GKE
+  - name: "gcr.io/cloud-builders/gcloud"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        gcloud container clusters get-credentials origin-hub-prod \
+          --region us-central1 \
+          --project $PROJECT_ID
+
   # Deploy to GKE using kubectl
   - name: "gcr.io/cloud-builders/kubectl"
     args:
