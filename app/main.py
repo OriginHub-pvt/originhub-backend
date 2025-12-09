@@ -1,6 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes import api_router
+from app.database import engine
+from sqlalchemy import text
 import os
 from dotenv import load_dotenv
 
@@ -39,5 +41,26 @@ async def root():
 
 @app.get("/health")
 async def health():
-    """Health check endpoint"""
-    return {"success": True, "status": "healthy"}
+    """
+    Health check endpoint with database connectivity check.
+    Returns detailed status of the API and its dependencies.
+    """
+    health_status = {
+        "success": True,
+        "status": "healthy",
+        "api": "operational",
+        "database": "unknown",
+    }
+
+    # Check database connectivity
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        health_status["database"] = "connected"
+    except Exception as e:
+        health_status["database"] = "disconnected"
+        health_status["database_error"] = str(e)
+        health_status["status"] = "degraded"
+        health_status["success"] = False  # API is running but DB is down
+
+    return health_status
