@@ -22,7 +22,7 @@ steps:
   # Deploy to GKE using kubectl
   - name: "gcr.io/cloud-builders/kubectl"
     env:
-      - CLOUDSDK_COMPUTE_REGION=us-central1
+      - CLOUDSDK_COMPUTE_REGION=us-central1-a
       - CLOUDSDK_CONTAINER_CLUSTER=originhub-prod
     args:
       [
