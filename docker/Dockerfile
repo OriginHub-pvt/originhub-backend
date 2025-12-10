@@ -31,15 +31,15 @@ RUN chmod +x /entrypoint.sh
 COPY . .
 
 # Expose port
+# Expose port (optional, but fine)
 EXPOSE 8000
 
-# Health check
+# Health check — keep it
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
-# Use entrypoint script
+# Entry script
 ENTRYPOINT ["/entrypoint.sh"]
 
-# Default command (can be overridden in docker-compose.yml)
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
-
+# FIXED CMD for Cloud Run
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

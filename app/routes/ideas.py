@@ -150,7 +150,7 @@ async def increment_idea_views(idea_id: str):
     """
     Increment the view count for an idea by 1.
     Each time this endpoint is called, the idea's view count increases by 1.
-    
+
     No authentication required - anyone can view ideas.
     """
     try:
@@ -163,10 +163,7 @@ async def increment_idea_views(idea_id: str):
 
         # Broadcast real-time update to WebSocket clients
         try:
-            await broadcast_view_update(
-                idea_id=idea_id,
-                views=updated_idea["views"]
-            )
+            await broadcast_view_update(idea_id=idea_id, views=updated_idea["views"])
         except Exception as e:
             # Don't fail the request if WebSocket broadcast fails
             print(f"WebSocket broadcast error: {e}")
@@ -190,7 +187,7 @@ async def increment_idea_upvotes(
     """
     Add an upvote for an idea by the authenticated user.
     Tracks which user upvoted which idea to prevent duplicate upvotes.
-    
+
     Requires authentication via X-User-Id header.
     Returns 400 if user has already upvoted this idea.
     """
@@ -208,7 +205,7 @@ async def increment_idea_upvotes(
                 idea_id=idea_id,
                 upvotes=updated_idea["upvotes"],
                 user_id=user_id,
-                action="upvoted"
+                action="upvoted",
             )
         except Exception as e:
             # Don't fail the request if WebSocket broadcast fails
@@ -238,7 +235,7 @@ async def decrement_idea_upvotes(
     """
     Remove an upvote for an idea by the authenticated user.
     Deletes the upvote record and decrements the upvote count.
-    
+
     Requires authentication via X-User-Id header.
     Returns 400 if user has not upvoted this idea.
     """
@@ -256,7 +253,7 @@ async def decrement_idea_upvotes(
                 idea_id=idea_id,
                 upvotes=updated_idea["upvotes"],
                 user_id=user_id,
-                action="removed_upvote"
+                action="removed_upvote",
             )
         except Exception as e:
             # Don't fail the request if WebSocket broadcast fails
@@ -283,12 +280,12 @@ async def decrement_idea_upvotes(
 async def get_user_upvoted_ideas(user_id: str = Depends(get_current_user_id)):
     """
     Get all ideas that the authenticated user has upvoted.
-    
+
     Requires authentication via X-User-Id header.
     """
     try:
         upvoted_idea_ids = ideas_service.get_user_upvoted_ideas(user_id)
-        
+
         if not upvoted_idea_ids:
             return IdeaListResponse(
                 success=True,
@@ -318,17 +315,15 @@ async def get_user_upvoted_ideas(user_id: str = Depends(get_current_user_id)):
 
 
 @router.get("/{idea_id}/upvote-status")
-async def get_upvote_status(
-    idea_id: str, user_id: str = Depends(get_current_user_id)
-):
+async def get_upvote_status(idea_id: str, user_id: str = Depends(get_current_user_id)):
     """
     Check if the authenticated user has upvoted a specific idea.
-    
+
     Requires authentication via X-User-Id header.
     """
     try:
         has_upvoted = ideas_service.has_user_upvoted(idea_id, user_id)
-        
+
         return {
             "success": True,
             "idea_id": idea_id,
@@ -346,12 +341,12 @@ async def sync_all_upvote_counts():
     """
     Admin endpoint to recalculate and sync all upvote counts from the idea_upvotes table.
     Useful for data integrity checks or after migrations.
-    
+
     Note: This is a maintenance endpoint. Consider adding authentication/authorization.
     """
     try:
         synced_counts = ideas_service.sync_all_upvote_counts()
-        
+
         return {
             "success": True,
             "message": f"Synced upvote counts for {len(synced_counts)} ideas",
