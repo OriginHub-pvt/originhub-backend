@@ -1,5 +1,5 @@
 from logging.config import fileConfig
-
+from configparser import ConfigParser
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
@@ -21,7 +21,11 @@ from app.models import User, Idea, Chat, Message, IdeaUpvote, Comment
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
+# config = context.config
+
+
 config = context.config
+config.file_config = ConfigParser(interpolation=None)
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
