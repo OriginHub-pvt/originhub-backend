@@ -1,58 +1,209 @@
 """
 LLM service for AI chat responses
-Supports OpenAI API with fallback to mock responses
+Uses local OriginHub Agentic System API (localhost:8004) for user conversations
 """
 
 import os
-from typing import List, Dict
+from typing import List, Dict, Optional
 from dotenv import load_dotenv
+import httpx
 
 load_dotenv()
 
-# Try to import OpenAI
-try:
-    from openai import AsyncOpenAI
+# Configuration for local API
+API_BASE_URL = os.getenv("ORIGINHUB_API_URL", "http://localhost:8004")
+API_HEALTH_ENDPOINT = f"{API_BASE_URL}/health"
+API_CREATE_SESSION_ENDPOINT = f"{API_BASE_URL}/sessions"
+API_CHAT_ENDPOINT_TEMPLATE = f"{API_BASE_URL}/chat"
+API_DELETE_SESSION_ENDPOINT_TEMPLATE = f"{API_BASE_URL}/sessions"
 
-    OPENAI_AVAILABLE = True
-except ImportError:
-    OPENAI_AVAILABLE = False
+# Session management: maps chat_id to session_id
+# In production, you might want to store this in the database
+_chat_to_session_map: Dict[str, str] = {}
 
-# Get OpenAI API key from environment
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-
-# Initialize OpenAI client if available
-client = None
-if OPENAI_AVAILABLE and OPENAI_API_KEY:
-    client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+# HTTP client for async requests
+_http_client: Optional[httpx.AsyncClient] = None
 
 
-async def generate_ai_reply(messages_list: List[Dict[str, str]]) -> str:
+async def _get_http_client() -> httpx.AsyncClient:
+    """Get or create HTTP client for API requests."""
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(timeout=60.0)
+    return _http_client
+
+
+async def _check_api_health() -> bool:
+    """Check if the local API is running and healthy."""
+    try:
+        client = await _get_http_client()
+        response = await client.get(API_HEALTH_ENDPOINT, timeout=5.0)
+        return response.status_code == 200
+    except Exception as e:
+        print(f"API health check failed: {str(e)}")
+        return False
+
+
+async def _create_session() -> Optional[str]:
+    """Create a new session in the local API."""
+    try:
+        client = await _get_http_client()
+        response = await client.post(API_CREATE_SESSION_ENDPOINT, timeout=10.0)
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("session_id")
+        else:
+            print(f"Failed to create session: {response.status_code} - {response.text}")
+            return None
+    except Exception as e:
+        print(f"Error creating session: {str(e)}")
+        return None
+
+
+async def _get_or_create_session(chat_id: str) -> Optional[str]:
     """
-    Generate AI reply using OpenAI API or fallback to mock response.
+    Get existing session_id for a chat_id or create a new one.
+
+    This function is called lazily when the first message is sent for a chat.
+    The session is NOT created when the chat is created in the database.
+    This ensures we only create API sessions when they're actually needed.
+
+    Args:
+        chat_id: The database chat ID (UUID)
+
+    Returns:
+        The API session_id if successful, None otherwise
+    """
+    if chat_id in _chat_to_session_map:
+        return _chat_to_session_map[chat_id]
+
+    # Create a new session in the API (this happens on first message, not on chat creation)
+    session_id = await _create_session()
+    if session_id:
+        _chat_to_session_map[chat_id] = session_id
+    return session_id
+
+
+async def _delete_session(session_id: str) -> None:
+    """Delete a session from the local API."""
+    try:
+        client = await _get_http_client()
+        await client.delete(
+            f"{API_DELETE_SESSION_ENDPOINT_TEMPLATE}/{session_id}", timeout=5.0
+        )
+    except Exception as e:
+        print(f"Error deleting session: {str(e)}")
+
+
+def cleanup_chat_session(chat_id: str) -> None:
+    """
+    Clean up session mapping when a chat is deleted.
+    This should be called when a chat is deleted to remove the session mapping.
+
+    Args:
+        chat_id: The chat ID to clean up
+    """
+    if chat_id in _chat_to_session_map:
+        session_id = _chat_to_session_map.pop(chat_id)
+        # Optionally delete the session from the API as well
+        # Note: This is a sync function, so we can't await the delete
+        # The session will be cleaned up by the API eventually if not used
+
+
+async def generate_ai_reply(
+    messages_list: List[Dict[str, str]], chat_id: Optional[str] = None
+) -> str:
+    """
+    Generate AI reply using local OriginHub Agentic System API.
 
     Args:
         messages_list: List of message dictionaries with 'role' and 'content' keys
                      Format: [{"role": "user", "content": "..."}, ...]
+        chat_id: Optional chat ID for session management. If provided, maintains
+                session state across messages. If not provided, creates a new session
+                for each call.
 
     Returns:
         AI response as a string
     """
-    # Use OpenAI if available and configured
-    if client and OPENAI_API_KEY:
-        try:
-            response = await client.chat.completions.create(
-                model=OPENAI_MODEL,
-                messages=messages_list,
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            print(f"OpenAI API error: {str(e)}")
-            # Fallback to mock response on error
+    # Check API health first
+    if not await _check_api_health():
+        print("Local API is not available, falling back to mock response")
+        return _generate_mock_response(messages_list)
+
+    # Extract the last user message (the API manages conversation state via sessions)
+    # Note: We only send the current message, not the full history, because the API
+    # maintains conversation context within each session. This matches the Streamlit app pattern.
+    last_user_message = None
+    for msg in reversed(messages_list):
+        if msg.get("role") == "user":
+            last_user_message = msg.get("content", "")
+            break
+
+    if not last_user_message:
+        return "I'm here to help! What would you like to discuss?"
+
+    try:
+        # Get or create session for this chat
+        # IMPORTANT: Session is created lazily here (on first message), NOT when chat is created in DB
+        # This ensures we only create API sessions when actually needed for conversation
+        session_id = None
+        if chat_id:
+            session_id = await _get_or_create_session(chat_id)
+        else:
+            # If no chat_id provided, create a temporary session (will be cleaned up after use)
+            session_id = await _create_session()
+
+        if not session_id:
+            print("Failed to create/get session, falling back to mock response")
             return _generate_mock_response(messages_list)
 
-    # Fallback to mock response
-    return _generate_mock_response(messages_list)
+        # Send message to the API
+        client = await _get_http_client()
+        payload = {"message": last_user_message}
+
+        response = await client.post(
+            f"{API_CHAT_ENDPOINT_TEMPLATE}/{session_id}", json=payload, timeout=60.0
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            ai_response_raw = data.get("response", "")
+
+            # The API may return response as string or dict, convert dict to string if needed
+            if isinstance(ai_response_raw, dict):
+                # If it's a dict, try to extract meaningful text or convert to JSON string
+                if "text" in ai_response_raw:
+                    ai_response = ai_response_raw["text"]
+                elif "message" in ai_response_raw:
+                    ai_response = ai_response_raw["message"]
+                elif "content" in ai_response_raw:
+                    ai_response = ai_response_raw["content"]
+                else:
+                    # Convert dict to JSON string as fallback
+                    import json
+
+                    ai_response = json.dumps(ai_response_raw)
+            else:
+                ai_response = str(ai_response_raw) if ai_response_raw else ""
+
+            # If no chat_id was provided and we created a temp session, clean it up
+            if not chat_id and session_id:
+                await _delete_session(session_id)
+
+            return (
+                ai_response if ai_response else _generate_mock_response(messages_list)
+            )
+        else:
+            print(f"API Error: {response.status_code} - {response.text}")
+            return _generate_mock_response(messages_list)
+
+    except httpx.TimeoutException:
+        print("Request to local API timed out, falling back to mock response")
+        return _generate_mock_response(messages_list)
+    except Exception as e:
+        print(f"Error calling local API: {str(e)}")
+        return _generate_mock_response(messages_list)
 
 
 def _generate_mock_response(messages_list: List[Dict[str, str]]) -> str:
@@ -105,6 +256,7 @@ async def generate_summary(messages_text: str) -> str:
 async def generate_chat_title(first_user_message: str) -> str:
     """
     Generate a concise 2-3 word title from the first user message.
+    Uses simple extraction from the message text.
 
     Args:
         first_user_message: The first user message text (not formatted conversation)
@@ -112,40 +264,8 @@ async def generate_chat_title(first_user_message: str) -> str:
     Returns:
         Concise title as a string (2-3 words)
     """
-    # Use OpenAI if available and configured
-    if client and OPENAI_API_KEY:
-        try:
-            title_prompt = [
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant that creates very concise titles. Generate a 2-3 word title that summarizes the user's message. Return ONLY the title words, no quotes, no explanation, no additional text. Examples: 'Startup Idea Help', 'Business Advice', 'Product Feedback'.",
-                },
-                {
-                    "role": "user",
-                    "content": f"Create a 2-3 word title for this message: {first_user_message}",
-                },
-            ]
-            response = await client.chat.completions.create(
-                model=OPENAI_MODEL,
-                messages=title_prompt,
-                max_tokens=20,  # Limit response length
-                temperature=0.3,  # Lower temperature for more consistent, concise output
-            )
-            title = response.choices[0].message.content.strip()
-            # Clean up the title (remove quotes, extra whitespace, periods)
-            title = title.strip().strip('"').strip("'").strip(".").strip()
-            # Ensure it's 2-3 words max
-            words = title.split()
-            if len(words) > 3:
-                title = " ".join(words[:3])
-            # Limit to 50 characters
-            return title[:50] if title else "New Chat"
-        except Exception as e:
-            print(f"OpenAI API error in title generation: {str(e)}")
-            # Fallback to mock title
-            return _generate_mock_title(first_user_message)
-
-    # Fallback to mock title generation
+    # Use simple title generation from the message
+    # This is more reliable and doesn't require API calls
     return _generate_mock_title(first_user_message)
 
 

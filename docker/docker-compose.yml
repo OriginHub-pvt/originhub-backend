@@ -64,6 +64,9 @@ services:
     ports:
       - "${API_PORT:-8000}:8000"
     environment:
+      # Agentic API (OpenAI replacement)
+      # Use host.docker.internal so the container can reach the host’s 8004
+      - ORIGINHUB_API_URL=${ORIGINHUB_API_URL:-http://host.docker.internal:8004}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-originhub}:${POSTGRES_PASSWORD:-originhub123}@postgres:5432/${POSTGRES_DB:-originhub}
       - WEAVIATE_URL=http://weaviate:8080
       - POSTGRES_HOST=postgres

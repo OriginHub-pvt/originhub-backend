@@ -16,4 +16,5 @@ weaviate-client==3.25.3
 
 # LLM (Optional - for AI chat features)
 openai>=1.0.0
+httpx>=0.25.0
 

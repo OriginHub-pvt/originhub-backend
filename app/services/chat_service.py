@@ -12,6 +12,7 @@ from app.services.llm_service import (
     generate_ai_reply,
     generate_summary,
     generate_chat_title,
+    cleanup_chat_session,
 )
 
 
@@ -283,6 +284,9 @@ class ChatService:
         ChatService.save_message(chat_id, "user", message)
 
         # 3. Build history for LLM
+        # Note: We build the full history here, but generate_ai_reply will only send
+        # the last message to the API (the API manages conversation state via sessions).
+        # The history is still useful for potential fallback scenarios.
         history = ChatService.get_chat_messages(chat_id)
         formatted = [
             {
@@ -292,8 +296,11 @@ class ChatService:
             for m in history
         ]
 
-        # 4. Get AI reply
-        ai_response = await generate_ai_reply(formatted)
+        # 4. Get AI reply (pass chat_id for session management)
+        # IMPORTANT: The API session is created lazily here (on first message),
+        # NOT when the chat is created in the database. This ensures we only
+        # create API sessions when they're actually needed for conversation.
+        ai_response = await generate_ai_reply(formatted, chat_id=chat_id)
 
         # 5. Save AI message
         ChatService.save_message(chat_id, "assistant", ai_response)
@@ -341,6 +348,9 @@ class ChatService:
             # Delete the chat (messages will be automatically deleted due to CASCADE)
             db.delete(chat)
             db.commit()
+
+            # Clean up the session mapping for this chat
+            cleanup_chat_session(chat_id)
 
         except ValueError:
             db.rollback()
