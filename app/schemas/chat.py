@@ -109,3 +109,9 @@ class ChatDeleteResponse(BaseModel):
 
     success: bool = True
     message: str = "Chat deleted successfully"
+
+
+class ConvertToIdeaRequest(BaseModel):
+    """Schema for converting chat to idea"""
+
+    chat_id: str = Field(..., description="Chat ID to convert to idea")

@@ -13,8 +13,13 @@ from app.schemas import (
     ChatSummaryResponse,
     ChatDeleteResponse,
 )
+from app.schemas.chat import ConvertToIdeaRequest
 from app.services.chat_service import chat_service
-from app.services.llm_service import generate_ai_reply_stream
+from app.services.llm_service import generate_ai_reply_stream, extract_idea_from_chat
+from app.services.ideas_service import ideas_service
+from app.schemas import IdeaCreate, IdeaCreateResponse
+from app.database import SessionLocal
+from app.models.user import User
 from app.dependencies import get_current_user_id
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -202,6 +207,93 @@ async def create_new_chat(user_id: str = Depends(get_current_user_id)):
             last_message_at=chat["last_message_at"],
         )
 
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.post("/convert-to-idea", response_model=IdeaCreateResponse, status_code=201)
+async def convert_chat_to_idea(
+    request: ConvertToIdeaRequest,
+    user_id: str = Depends(get_current_user_id),
+):
+    """
+    Convert a chat conversation into a business idea.
+
+    Extracts idea information from all messages in the chat using OpenAI,
+    then creates an idea in the database.
+
+    Requires authentication via X-User-Id header.
+    Verifies that the chat belongs to the authenticated user.
+    """
+    try:
+        # 1. Get chat_id from request
+        chat_id = request.chat_id
+
+        # 2. Verify chat ownership
+        chat = chat_service.get_chat_by_id(chat_id, user_id)
+        if not chat:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Chat with id {chat_id} not found or access denied",
+            )
+
+        # 3. Get all messages from the chat
+        messages = chat_service.get_chat_messages(chat_id)
+        if not messages:
+            raise HTTPException(
+                status_code=400,
+                detail="Chat has no messages. Cannot convert empty chat to idea.",
+            )
+
+        # 4. Format messages as conversation text
+        messages_text = "\n".join(
+            [f"{m['sender'].upper()}: {m['message']}" for m in messages]
+        )
+
+        # 5. Extract idea information using OpenAI
+        idea_data = await extract_idea_from_chat(messages_text)
+
+        # 6. Get user information for author field
+        db = SessionLocal()
+        try:
+            user = db.query(User).filter(User.user_id == user_id).first()
+            if user:
+                # Use first_name + last_name if available, otherwise use email
+                if user.first_name and user.last_name:
+                    author = f"{user.first_name} {user.last_name}"
+                elif user.first_name:
+                    author = user.first_name
+                else:
+                    author = user.email.split("@")[0]  # Use email username as fallback
+            else:
+                # Fallback if user not found
+                author = "Unknown"
+        finally:
+            db.close()
+
+        # 7. Create IdeaCreate object
+        idea_create = IdeaCreate(
+            title=idea_data["title"],
+            description=idea_data["description"],
+            problem=idea_data["problem"],
+            solution=idea_data["solution"],
+            marketSize=idea_data["marketSize"],
+            tags=idea_data.get("tags", []),
+            author=author,
+            link=idea_data.get("link"),
+        )
+
+        # 8. Create the idea using the ideas service
+        new_idea = ideas_service.create_idea(idea_create, user_id=user_id)
+
+        return IdeaCreateResponse(
+            success=True,
+            data={"id": new_idea["id"]},
+            message="Idea created successfully from chat",
+        )
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 

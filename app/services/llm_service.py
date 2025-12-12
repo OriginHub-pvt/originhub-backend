@@ -12,9 +12,25 @@ import asyncio
 
 load_dotenv()
 
+# Try to import OpenAI for idea extraction
+try:
+    from openai import AsyncOpenAI
+
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+
+# Get OpenAI API key from environment (for idea extraction)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+# Initialize OpenAI client if available
+openai_client = None
+if OPENAI_AVAILABLE and OPENAI_API_KEY:
+    openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+
 # Configuration for local API
 API_BASE_URL = os.getenv("ORIGINHUB_API_URL", "http://localhost:8004")
-print(API_BASE_URL)
 API_HEALTH_ENDPOINT = f"{API_BASE_URL}/health"
 API_CREATE_SESSION_ENDPOINT = f"{API_BASE_URL}/sessions"
 API_CHAT_ENDPOINT_TEMPLATE = f"{API_BASE_URL}/chat"
@@ -408,3 +424,84 @@ def _generate_mock_title(first_user_message: str) -> str:
         title = title[:47] + "..."
 
     return title if title else "New Chat"
+
+
+async def extract_idea_from_chat(messages_text: str) -> Dict[str, str]:
+    """
+    Extract idea information from chat conversation using OpenAI.
+
+    Args:
+        messages_text: Full conversation text from chat messages
+
+    Returns:
+        Dictionary with idea fields: title, description, problem, solution, marketSize, tags, link
+    """
+    if not openai_client or not OPENAI_API_KEY:
+        raise Exception(
+            "OpenAI API is not configured. Please set OPENAI_API_KEY environment variable."
+        )
+
+    extraction_prompt = f"""Extract business idea information from the following conversation and return it as a JSON object with these exact fields:
+- title: A concise title for the idea (2-5 words)
+- description: A brief description of the idea (2-3 sentences)
+- problem: The problem this idea solves (1-2 sentences)
+- solution: The proposed solution (2-3 sentences)
+- marketSize: Market size in Large, Medium, Small
+- tags: Array of relevant tags (3-5 tags, lowercase, no spaces use hyphens)
+- link: Any URL mentioned in the conversation, or null if none
+
+Conversation:
+{messages_text}
+
+Return ONLY valid JSON in this exact format:
+{{
+  "title": "...",
+  "description": "...",
+  "problem": "...",
+  "solution": "...",
+  "marketSize": "...",
+  "tags": ["tag1", "tag2", "tag3"],
+  "link": "..." or null
+}}"""
+
+    try:
+        response = await openai_client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant that extracts structured business idea information from conversations. Always return valid JSON only, no additional text.",
+                },
+                {"role": "user", "content": extraction_prompt},
+            ],
+            temperature=0.3,
+            response_format={"type": "json_object"},
+        )
+
+        result_text = response.choices[0].message.content
+        idea_data = json.loads(result_text)
+
+        # Ensure all required fields are present and tags is a list
+        required_fields = ["title", "description", "problem", "solution", "marketSize"]
+        for field in required_fields:
+            if field not in idea_data or not idea_data[field]:
+                raise ValueError(f"Missing or empty required field: {field}")
+
+        # Ensure tags is a list
+        if "tags" not in idea_data:
+            idea_data["tags"] = []
+        if not isinstance(idea_data["tags"], list):
+            idea_data["tags"] = []
+
+        # Ensure link is string or None
+        if "link" not in idea_data:
+            idea_data["link"] = None
+        if idea_data["link"] and not isinstance(idea_data["link"], str):
+            idea_data["link"] = None
+
+        return idea_data
+
+    except json.JSONDecodeError as e:
+        raise Exception(f"Failed to parse OpenAI response as JSON: {str(e)}")
+    except Exception as e:
+        raise Exception(f"Error extracting idea from chat: {str(e)}")
