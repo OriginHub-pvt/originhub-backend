@@ -4,14 +4,17 @@ Uses local OriginHub Agentic System API (localhost:8004) for user conversations
 """
 
 import os
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, AsyncGenerator
 from dotenv import load_dotenv
 import httpx
+import json
+import asyncio
 
 load_dotenv()
 
 # Configuration for local API
 API_BASE_URL = os.getenv("ORIGINHUB_API_URL", "http://localhost:8004")
+print(API_BASE_URL)
 API_HEALTH_ENDPOINT = f"{API_BASE_URL}/health"
 API_CREATE_SESSION_ENDPOINT = f"{API_BASE_URL}/sessions"
 API_CHAT_ENDPOINT_TEMPLATE = f"{API_BASE_URL}/chat"
@@ -230,6 +233,119 @@ def _generate_mock_response(messages_list: List[Dict[str, str]]) -> str:
         return f"I understand you're asking about: {last_user_message}. Let me help you brainstorm some solutions and ideas. What specific aspect would you like to explore further?"
     else:
         return "I'm here to help! What would you like to discuss?"
+
+
+async def generate_ai_reply_stream(
+    messages_list: List[Dict[str, str]], chat_id: Optional[str] = None
+) -> AsyncGenerator[str, None]:
+    """
+    Stream AI reply using local OriginHub Agentic System API.
+    Yields tokens as they're generated (chunked from full response).
+
+    Args:
+        messages_list: List of message dictionaries with 'role' and 'content' keys
+                     Format: [{"role": "user", "content": "..."}, ...]
+        chat_id: Optional chat ID for session management. If provided, maintains
+                session state across messages. If not provided, creates a new session
+                for each call.
+
+    Yields:
+        Tokens/chunks of the AI response as strings
+    """
+    # Check API health first
+    if not await _check_api_health():
+        print("Local API is not available, falling back to mock response")
+        mock_response = _generate_mock_response(messages_list)
+        # Stream the mock response word by word
+        for word in mock_response.split():
+            yield word + " "
+        return
+
+    # Extract the last user message
+    last_user_message = None
+    for msg in reversed(messages_list):
+        if msg.get("role") == "user":
+            last_user_message = msg.get("content", "")
+            break
+
+    if not last_user_message:
+        yield "I'm here to help! What would you like to discuss?"
+        return
+
+    try:
+        # Get or create session for this chat
+        session_id = None
+        if chat_id:
+            session_id = await _get_or_create_session(chat_id)
+        else:
+            session_id = await _create_session()
+
+        if not session_id:
+            print("Failed to create/get session, falling back to mock response")
+            mock_response = _generate_mock_response(messages_list)
+            for word in mock_response.split():
+                yield word + " "
+            return
+
+        # Send message to the API
+        client = await _get_http_client()
+        payload = {"message": last_user_message}
+
+        response = await client.post(
+            f"{API_CHAT_ENDPOINT_TEMPLATE}/{session_id}", json=payload, timeout=60.0
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            ai_response_raw = data.get("response", "")
+
+            # The API may return response as string or dict, convert dict to string if needed
+            if isinstance(ai_response_raw, dict):
+                if "text" in ai_response_raw:
+                    ai_response = ai_response_raw["text"]
+                elif "message" in ai_response_raw:
+                    ai_response = ai_response_raw["message"]
+                elif "content" in ai_response_raw:
+                    ai_response = ai_response_raw["content"]
+                else:
+                    import json
+
+                    ai_response = json.dumps(ai_response_raw)
+            else:
+                ai_response = str(ai_response_raw) if ai_response_raw else ""
+
+            # Stream the response word by word (simulating token streaming)
+            # In a real streaming API, you'd stream actual tokens as they're generated
+            if ai_response:
+                # Split into words and stream with small delay for realistic streaming effect
+                words = ai_response.split()
+                for i, word in enumerate(words):
+                    if i > 0:
+                        yield " "  # Add space before word (except first)
+                    yield word
+                    # Small delay to simulate real streaming (optional, can be removed)
+                    await asyncio.sleep(0.01)
+            else:
+                # Fallback to mock if empty
+                mock_response = _generate_mock_response(messages_list)
+                for word in mock_response.split():
+                    yield word + " "
+        else:
+            print(f"API Error: {response.status_code} - {response.text}")
+            mock_response = _generate_mock_response(messages_list)
+            for word in mock_response.split():
+                yield word + " "
+
+    except httpx.TimeoutException:
+        print("Request to local API timed out, falling back to mock response")
+        mock_response = _generate_mock_response(messages_list)
+        for word in mock_response.split():
+            yield word + " "
+    except Exception as e:
+        print(f"Error calling local API: {str(e)}")
+        mock_response = _generate_mock_response(messages_list)
+        for word in mock_response.split():
+            yield word + " "
 
 
 async def generate_summary(messages_text: str) -> str:

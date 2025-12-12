@@ -1,5 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi.responses import StreamingResponse
 from typing import Optional
+import json
 from app.schemas import (
     ChatRequest,
     ChatResponse,
@@ -12,18 +14,22 @@ from app.schemas import (
     ChatDeleteResponse,
 )
 from app.services.chat_service import chat_service
+from app.services.llm_service import generate_ai_reply_stream
 from app.dependencies import get_current_user_id
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
-@router.post("", response_model=ChatSendResponse)
+@router.post("")
 async def send_message(
     request: MessageCreate,
     user_id: str = Depends(get_current_user_id),
 ):
     """
     Send a message in a chat. Creates a new chat if chat_id is not provided.
+
+    If stream=true in request body, returns a streaming response (Server-Sent Events).
+    Otherwise, returns a complete response as before.
 
     Requires authentication via X-User-Id header.
     """
@@ -33,26 +39,110 @@ async def send_message(
         if not user_message:
             raise HTTPException(status_code=400, detail="Message cannot be empty")
 
-        # Process the message (creates chat if needed, gets AI reply)
-        result = await chat_service.process_message(
-            user_id=user_id,
-            chat_id=request.chat_id,
-            message=user_message,
-        )
+        # Check if streaming is requested
+        if request.stream:
+            # Streaming mode: return Server-Sent Events
+            return await _handle_streaming_message(
+                user_id=user_id,
+                chat_id=request.chat_id,
+                message=user_message,
+            )
+        else:
+            # Non-streaming mode: return full response
+            result = await chat_service.process_message(
+                user_id=user_id,
+                chat_id=request.chat_id,
+                message=user_message,
+            )
 
-        return ChatSendResponse(
-            success=True,
-            data={
-                "chat_id": result["chat_id"],
-                "reply": result["reply"],
-            },
-            message="Message sent successfully",
-        )
+            return ChatSendResponse(
+                success=True,
+                data={
+                    "chat_id": result["chat_id"],
+                    "reply": result["reply"],
+                },
+                message="Message sent successfully",
+            )
 
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+async def _handle_streaming_message(
+    user_id: str, chat_id: Optional[str], message: str
+) -> StreamingResponse:
+    """
+    Handle streaming message response.
+
+    Creates chat if needed, saves user message, streams AI response,
+    then saves the complete AI message.
+    """
+    # 1. Create chat if not provided
+    if not chat_id:
+        chat = chat_service.create_chat(user_id)
+        chat_id = chat["id"]
+
+    # 2. Save the user message
+    chat_service.save_message(chat_id, "user", message)
+
+    # 3. Build history for LLM
+    history = chat_service.get_chat_messages(chat_id)
+    formatted = [
+        {
+            "role": "user" if m["sender"] == "user" else "assistant",
+            "content": m["message"],
+        }
+        for m in history
+    ]
+
+    # 4. Stream AI response and collect full response
+    full_response = ""
+
+    async def generate_stream():
+        nonlocal full_response
+        try:
+            async for token in generate_ai_reply_stream(formatted, chat_id=chat_id):
+                full_response += token
+                # Format as Server-Sent Events
+                chunk_data = json.dumps({"token": token})
+                yield f"data: {chunk_data}\n\n"
+
+            # Send final message indicating completion
+            yield f"data: {json.dumps({'done': True, 'chat_id': chat_id})}\n\n"
+        except Exception as e:
+            error_data = json.dumps({"error": str(e)})
+            yield f"data: {error_data}\n\n"
+        finally:
+            # 5. Save the complete AI message after streaming
+            if full_response:
+                chat_service.save_message(chat_id, "assistant", full_response.strip())
+
+            # 6. Auto-generate title after 2nd message (first user + first assistant)
+            messages = chat_service.get_chat_messages(chat_id)
+            if len(messages) == 2:
+                first_user_message = None
+                for msg in messages:
+                    if msg["sender"] == "user":
+                        first_user_message = msg["message"]
+                        break
+
+                if first_user_message:
+                    from app.services.llm_service import generate_chat_title
+
+                    title = await generate_chat_title(first_user_message)
+                    chat_service.update_chat_title(chat_id, title)
+
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable buffering in nginx
+        },
+    )
 
 
 @router.get("/empty", response_model=ChatResponse)

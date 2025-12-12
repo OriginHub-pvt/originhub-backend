@@ -56,6 +56,9 @@ class MessageCreate(BaseModel):
     chat_id: Optional[str] = Field(
         None, description="Chat ID (optional, creates new chat if not provided)"
     )
+    stream: bool = Field(
+        False, description="Whether to stream the response token-by-token"
+    )
 
 
 class MessageResponse(BaseModel):
